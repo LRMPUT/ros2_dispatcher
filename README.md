@@ -32,6 +32,7 @@ Grouping plugins under processing_plugins keeps infrastructure packages separate
 ## Architecture diagram
 
 Below is a high‑level architecture illustrating the data flow between components:
+![Architecture diagram](docs/graph.png)
 
 The Introspection & Manager node discovers ROS 2 topics and communicates with the GUI and plugin loader. The GUI sends configuration commands to the plugin loader. Selected topics are subscribed by the plugin loader, which instantiates plugin instances. Each plugin processes the data and publishes new topics or sends messages to the Kafka publisher.
 
