@@ -36,7 +36,7 @@ def launch_setup(context, *args, **kwargs):
             param_path
         ],
         output='screen',
-        arguments=['--ros-args', '--log-level', 'info', '--enable-stdout-logs'],
+        arguments=['--ros-args', '--log-level', 'DEBUG', '--enable-stdout-logs'],
     )
 
     return [

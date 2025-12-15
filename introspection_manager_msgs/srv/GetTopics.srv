@@ -1,0 +1,4 @@
+# Empty request; the caller only asks for the current list of topics.
+---
+# Response contains an array of topic name/type pairs.
+introspection_manager_msgs/TopicInfo[] topics
