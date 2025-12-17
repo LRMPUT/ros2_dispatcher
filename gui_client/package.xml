@@ -9,10 +9,8 @@
 
   <depend>rclpy</depend>
   <depend>rqt_gui</depend>
-  <exec_depend>rclpy</exec_depend>  
-  <exec_depend>rqt_gui</exec_depend>  
   <exec_depend>rqt_gui_py</exec_depend>  
-  <exec_depend>introspection_manager_msgs</exec_depend>  <!-- if this provides .srv definitions -->
+  <exec_depend>introspection_manager_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

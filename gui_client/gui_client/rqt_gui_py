@@ -2,7 +2,6 @@ from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
 from PyQt5.QtCore import QTimer
 import yaml
-import os
 from pathlib import Path
 from datetime import datetime
 
@@ -13,7 +12,7 @@ class IntrospectionPlugin(Plugin):
     def __init__(self, context):
         super().__init__(context)
         self.setObjectName('IntrospectionPlugin')
-        self._node = context.node  # Use the shared rclpy node provided by RQt:contentReference[oaicite:11]{index=11}
+        self._node = context.node  # Use the shared rclpy node provided by RQt
 
         # --- Build GUI layout ---
         self._widget = QWidget()
@@ -43,7 +42,7 @@ class IntrospectionPlugin(Plugin):
         
         # Finalize layout
         self._widget.setLayout(layout)
-        context.add_widget(self._widget)  # Add the widget to the RQt UI dock:contentReference[oaicite:12]{index=12}
+        context.add_widget(self._widget)  # Add the widget to the RQt UI dock
         
         # --- ROS 2 service clients ---
         self.start_cli = self._node.create_client(StartIntrospection, 'start_introspection')
@@ -171,13 +170,14 @@ class IntrospectionPlugin(Plugin):
         config_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate filename with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        now = datetime.now()
+        timestamp = now.strftime('%Y%m%d_%H%M%S')
         config_file = config_dir / f'selected_topics_{timestamp}.yaml'
         
         # Prepare configuration data
         config_data = {
             'selected_topics': topics_config,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': now.isoformat(),
             'count': len(topics_config)
         }
         
