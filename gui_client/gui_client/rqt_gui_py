@@ -1,6 +1,10 @@
 from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
 from PyQt5.QtCore import QTimer
+import yaml
+import os
+from pathlib import Path
+from datetime import datetime
 
 # Import the service types from introspection_manager package
 from introspection_manager_msgs.srv import StartIntrospection, StopIntrospection, GetTopics
@@ -140,19 +144,61 @@ class IntrospectionPlugin(Plugin):
                 self.topic_list.addItem(f"{topic_name} [{topic_type}]")
     
     def handle_save_selection(self):
-        """Save selected topics (placeholder for forwarding logic)."""
+        """Save selected topics to a YAML configuration file."""
         selected_items = self.topic_list.selectedItems()
         if not selected_items:
             QMessageBox.information(self._widget, "Info", "No topics selected")
             return
         
-        selected_topics = [item.text() for item in selected_items]
-        # TODO: Implement forwarding/saving logic here
-        msg = f"Selected {len(selected_topics)} topic(s):\n" + "\n".join(selected_topics[:5])
-        if len(selected_topics) > 5:
-            msg += f"\n... and {len(selected_topics) - 5} more"
-        QMessageBox.information(self._widget, "Topics Selected", msg)
-        self._node.get_logger().info(f"Selected topics: {selected_topics}")
+        # Parse topic name and type from the format "topic_name [topic_type]"
+        topics_config = []
+        for item in selected_items:
+            text = item.text()
+            # Extract topic name and type
+            if '[' in text and ']' in text:
+                topic_name = text[:text.rfind('[')].strip()
+                topic_type = text[text.rfind('[')+1:text.rfind(']')].strip()
+                topics_config.append({
+                    'name': topic_name,
+                    'type': topic_type
+                })
+            else:
+                # Fallback if format is unexpected
+                topics_config.append({'name': text, 'type': 'unknown'})
+        
+        # Create config directory if it doesn't exist
+        config_dir = Path.home() / '.ros' / 'gui_client'
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        config_file = config_dir / f'selected_topics_{timestamp}.yaml'
+        
+        # Prepare configuration data
+        config_data = {
+            'selected_topics': topics_config,
+            'timestamp': datetime.now().isoformat(),
+            'count': len(topics_config)
+        }
+        
+        try:
+            # Write to YAML file
+            with open(config_file, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+            
+            # Success message
+            msg = f"Successfully saved {len(topics_config)} topic(s) to:\n{config_file}\n\n"
+            msg += "Topics:\n" + "\n".join([f"  - {t['name']}" for t in topics_config[:5]])
+            if len(topics_config) > 5:
+                msg += f"\n  ... and {len(topics_config) - 5} more"
+            
+            QMessageBox.information(self._widget, "Topics Saved", msg)
+            self._node.get_logger().info(f"Saved {len(topics_config)} topics to {config_file}")
+            
+        except Exception as e:
+            error_msg = f"Failed to save topics configuration:\n{str(e)}"
+            QMessageBox.critical(self._widget, "Error", error_msg)
+            self._node.get_logger().error(f"Failed to save topics: {e}")
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
