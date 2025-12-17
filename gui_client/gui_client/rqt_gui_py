@@ -16,7 +16,7 @@ from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
 from PyQt5.QtCore import QTimer
 import yaml
-import os
+import json
 from pathlib import Path
 from std_msgs.msg import String
 
@@ -195,9 +195,13 @@ class IntrospectionPlugin(Plugin):
         
         # Save to configuration file
         try:
+            # Get precise timestamp
+            time_msg = self._node.get_clock().now().to_msg()
+            timestamp = time_msg.sec + time_msg.nanosec * 1e-9
+            
             config_data = {
                 'selected_topics': selected_topics_data,
-                'timestamp': self._node.get_clock().now().to_msg().sec
+                'timestamp': timestamp
             }
             
             with open(self.config_file, 'w') as f:
@@ -213,10 +217,10 @@ class IntrospectionPlugin(Plugin):
         
         # Publish selected topics to ROS topic for other nodes to consume
         try:
-            # Create a simple message with topic names (can be enhanced to use custom message type)
-            topics_str = yaml.dump(selected_topics_data, default_flow_style=False)
+            # Use JSON for better ROS interoperability
+            topics_json = json.dumps(selected_topics_data)
             msg = String()
-            msg.data = topics_str
+            msg.data = topics_json
             self.selected_topics_pub.publish(msg)
             
             self._node.get_logger().info(f"Published {len(selected_topics_data)} selected topics")
