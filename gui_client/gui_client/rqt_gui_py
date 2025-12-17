@@ -1,6 +1,10 @@
 from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
 from PyQt5.QtCore import QTimer
+import yaml
+import os
+from pathlib import Path
+from std_msgs.msg import String
 
 # Import the service types from introspection_manager package
 from introspection_manager_msgs.srv import StartIntrospection, StopIntrospection, GetTopics
@@ -45,6 +49,18 @@ class IntrospectionPlugin(Plugin):
         self.start_cli = self._node.create_client(StartIntrospection, 'start_introspection')
         self.stop_cli  = self._node.create_client(StopIntrospection,  'stop_introspection')
         self.get_topics_cli = self._node.create_client(GetTopics, 'get_topics')
+        
+        # Publisher for selected topics (for plugin loader or other components to subscribe)
+        self.selected_topics_pub = self._node.create_publisher(
+            String, 
+            '~/selected_topics',
+            10
+        )
+        
+        # Path for saving selected topics configuration
+        self.config_dir = Path.home() / '.ros' / 'gui_client'
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.config_dir / 'selected_topics.yaml'
         
         # Connect button signals to handlers
         self.btn_start.clicked.connect(self.handle_start)
@@ -140,19 +156,72 @@ class IntrospectionPlugin(Plugin):
                 self.topic_list.addItem(f"{topic_name} [{topic_type}]")
     
     def handle_save_selection(self):
-        """Save selected topics (placeholder for forwarding logic)."""
+        """Save selected topics and forward them to the plugin loader."""
         selected_items = self.topic_list.selectedItems()
         if not selected_items:
             QMessageBox.information(self._widget, "Info", "No topics selected")
             return
         
-        selected_topics = [item.text() for item in selected_items]
-        # TODO: Implement forwarding/saving logic here
-        msg = f"Selected {len(selected_topics)} topic(s):\n" + "\n".join(selected_topics[:5])
-        if len(selected_topics) > 5:
-            msg += f"\n... and {len(selected_topics) - 5} more"
-        QMessageBox.information(self._widget, "Topics Selected", msg)
-        self._node.get_logger().info(f"Selected topics: {selected_topics}")
+        # Parse selected topics (format: "topic_name [topic_type]")
+        selected_topics_data = []
+        for item in selected_items:
+            text = item.text()
+            # Extract topic name and type from format "topic_name [topic_type]"
+            if '[' in text and ']' in text:
+                topic_name = text[:text.rfind('[')].strip()
+                topic_type = text[text.rfind('[') + 1:text.rfind(']')].strip()
+                selected_topics_data.append({
+                    'name': topic_name,
+                    'type': topic_type
+                })
+        
+        if not selected_topics_data:
+            QMessageBox.warning(self._widget, "Warning", "Could not parse selected topics")
+            return
+        
+        # Save to configuration file
+        try:
+            config_data = {
+                'selected_topics': selected_topics_data,
+                'timestamp': self._node.get_clock().now().to_msg().sec
+            }
+            
+            with open(self.config_file, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False)
+            
+            self._node.get_logger().info(f"Saved {len(selected_topics_data)} topics to {self.config_file}")
+            
+        except Exception as e:
+            error_msg = f"Failed to save configuration file: {str(e)}"
+            self._node.get_logger().error(error_msg)
+            QMessageBox.critical(self._widget, "Error", error_msg)
+            return
+        
+        # Publish selected topics to ROS topic for other nodes to consume
+        try:
+            # Create a simple message with topic names (can be enhanced to use custom message type)
+            topics_str = yaml.dump(selected_topics_data, default_flow_style=False)
+            msg = String()
+            msg.data = topics_str
+            self.selected_topics_pub.publish(msg)
+            
+            self._node.get_logger().info(f"Published {len(selected_topics_data)} selected topics")
+            
+        except Exception as e:
+            error_msg = f"Failed to publish selected topics: {str(e)}"
+            self._node.get_logger().error(error_msg)
+            # Don't show error dialog for publishing failure, as saving was successful
+        
+        # Show success message to user
+        topic_names = [t['name'] for t in selected_topics_data]
+        msg = f"Successfully saved and forwarded {len(topic_names)} topic(s):\n"
+        msg += "\n".join(topic_names[:5])
+        if len(topic_names) > 5:
+            msg += f"\n... and {len(topic_names) - 5} more"
+        msg += f"\n\nSaved to: {self.config_file}"
+        
+        QMessageBox.information(self._widget, "Topics Saved", msg)
+        self._node.get_logger().info(f"Selected topics: {topic_names}")
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
@@ -165,6 +234,8 @@ class IntrospectionPlugin(Plugin):
         self._node.destroy_client(self.start_cli)
         self._node.destroy_client(self.stop_cli)
         self._node.destroy_client(self.get_topics_cli)
+        # Destroy publisher
+        self._node.destroy_publisher(self.selected_topics_pub)
     
     def save_settings(self, plugin_settings, instance_settings):
         """Save plugin settings (optional)."""
