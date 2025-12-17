@@ -1,10 +1,11 @@
 from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox, QStyledItemDelegate
 from PyQt5.QtGui import QColor, QPainter, QBrush
-from PyQt5.QtCore import QTimer, QRect
+from PyQt5.QtCore import QTimer, QRect, Qt
 import yaml
 from pathlib import Path
 from datetime import datetime
+import rclpy.task
 
 # Import the service types from introspection_manager package
 from introspection_manager_msgs.srv import GetTopics
@@ -31,6 +32,12 @@ class CustomItemDelegate(QStyledItemDelegate):
         painter.restore()
 
 class IntrospectionPlugin(Plugin):
+    # Color constants
+    COLOR_SAVED = QColor(0, 128, 0)  # Green background for saved items
+    COLOR_DEFAULT_BG = QColor(255, 255, 255)  # White background
+    COLOR_SAVED_TEXT = QColor(255, 255, 255)  # White text for saved items
+    COLOR_DEFAULT_TEXT = QColor(0, 0, 0)  # Black text for default items
+    
     def __init__(self, context):
         super().__init__(context)
         self.version_info = '0.0.1'
@@ -78,7 +85,8 @@ class IntrospectionPlugin(Plugin):
         context.add_widget(self._widget)  # Add the widget to the RQt UI dock
         
         # --- ROS 2 service clients ---
-        self.get_topics_cli = self._node.create_client(GetTopics, '/introspection_manager_node/get_topics')
+        SERVICE_NAME = '/introspection_manager_node/get_topics'
+        self.get_topics_cli = self._node.create_client(GetTopics, SERVICE_NAME)
         
         # Connect button signals to handlers
         self.btn_update.clicked.connect(self.update_topic_list)
@@ -93,11 +101,25 @@ class IntrospectionPlugin(Plugin):
         # Store saved topic names to preserve green coloring
         self.saved_topics = set()
     
+    def _extract_topic_name(self, item_text):
+        """Extract topic name from item text format 'name [type]'."""
+        if '[' in item_text:
+            return item_text[:item_text.rfind('[')].strip()
+        return item_text.strip()
+    
+    def _extract_topic_info(self, item_text):
+        """Extract topic name and type from item text format 'name [type]'."""
+        if '[' not in item_text or ']' not in item_text:
+            return (item_text.strip(), 'unknown')
+        
+        topic_name = item_text[:item_text.rfind('[')].strip()
+        topic_type = item_text[item_text.rfind('[') + 1:item_text.rfind(']')].strip()
+        return (topic_name, topic_type)
     def update_topic_list(self):
         """Fetch topics from introspection manager and update the list."""
-        if not self.get_topics_cli.wait_for_service(timeout_sec=0.5):
+        if not self.get_topics_cli.wait_for_service(timeout_sec=2.5):
             # Don't show error dialog for periodic updates, just log
-            self._node.get_logger().warn("get_topics service not available")
+            self._node.get_logger().warning("get_topics service not available")
             return
         
         request = GetTopics.Request()
@@ -112,8 +134,10 @@ class IntrospectionPlugin(Plugin):
             self.all_topics = [(topic.name, topic.type) for topic in response.topics]
             # Apply current filter (keeps selection intact)
             self.filter_topics()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"Service call failed: {e}")
         except Exception as e:
-            self._node.get_logger().error(f"Get topics failed: {e}")
+            self._node.get_logger().error(f"Get topics failed with unexpected error: {e}")
     
     def filter_topics(self):
         """Filter the topic list based on the filter text."""
@@ -127,8 +151,8 @@ class IntrospectionPlugin(Plugin):
                 # Restore green color if this topic was saved
                 if topic_name in self.saved_topics:
                     item = self.topic_list.item(self.topic_list.count() - 1)
-                    item.setBackground(QColor(0, 128, 0))  # Green
-                    item.setForeground(QColor(255, 255, 255))  # White text
+                    item.setBackground(self.COLOR_SAVED)
+                    item.setForeground(self.COLOR_SAVED_TEXT)
     
     def handle_save_selection(self):
         """Save selected topics to a YAML configuration file."""
@@ -140,18 +164,11 @@ class IntrospectionPlugin(Plugin):
         # Parse topic name and type from the format "topic_name [topic_type]"
         topics_config = []
         for item in selected_items:
-            text = item.text()
-            # Extract topic name and type
-            if '[' in text and ']' in text:
-                topic_name = text[:text.rfind('[')].strip()
-                topic_type = text[text.rfind('[')+1:text.rfind(']')].strip()
-                topics_config.append({
-                    'name': topic_name,
-                    'type': topic_type
-                })
-            else:
-                # Fallback if format is unexpected
-                topics_config.append({'name': text, 'type': 'unknown'})
+            topic_name, topic_type = self._extract_topic_info(item.text())
+            topics_config.append({
+                'name': topic_name,
+                'type': topic_type
+            })
         
         # Create config directory if it doesn't exist
         config_dir = Path.home() / '.ros' / 'gui_client'
@@ -183,26 +200,27 @@ class IntrospectionPlugin(Plugin):
             QMessageBox.information(self._widget, "Topics Saved", msg)
             self._node.get_logger().info(f"Saved {len(topics_config)} topics to {config_file}")
             
-            # Color saved topics green
+            selected_texts = {item.text() for item in selected_items}
             for i in range(self.topic_list.count()):
                 item = self.topic_list.item(i)
-                for selected_item in selected_items:
-                    if item.text() == selected_item.text():
-                        item.setBackground(QColor(0, 128, 0))  # Green
-                        item.setForeground(QColor(255, 255, 255))  # White text
-                        # Extract topic name and add to saved set
-                        topic_text = item.text()
-                        topic_name = topic_text[:topic_text.rfind('[')].strip()
-                        self.saved_topics.add(topic_name)
-                        break
+                if item.text() in selected_texts:
+                    item.setBackground(self.COLOR_SAVED)
+                    item.setForeground(self.COLOR_SAVED_TEXT)
+                    # Extract topic name and add to saved set
+                    topic_name = self._extract_topic_name(item.text())
+                    self.saved_topics.add(topic_name)
             
             # Auto-clear selection after save
             self.topic_list.clearSelection()
             
-        except Exception as e:
+        except (IOError, OSError, yaml.YAMLError) as e:
             error_msg = f"Failed to save topics configuration:\n{str(e)}"
             QMessageBox.critical(self._widget, "Error", error_msg)
             self._node.get_logger().error(f"Failed to save topics: {e}")
+        except Exception as e:
+            error_msg = f"Unexpected error while saving topics:\n{str(e)}"
+            QMessageBox.critical(self._widget, "Error", error_msg)
+            self._node.get_logger().error(f"Unexpected error during save: {e}")
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
@@ -213,12 +231,11 @@ class IntrospectionPlugin(Plugin):
         selected_items = self.topic_list.selectedItems()
         for item in selected_items:
             # Check if item has green background
-            if item.background().color() == QColor(0, 128, 0):
-                item.setBackground(QColor(255, 255, 255))  # Reset to white
-                item.setForeground(QColor(0, 0, 0))  # Reset to black text
+            if item.background().color() == self.COLOR_SAVED:
+                item.setBackground(self.COLOR_DEFAULT_BG)
+                item.setForeground(self.COLOR_DEFAULT_TEXT)
                 # Remove from saved set
-                topic_text = item.text()
-                topic_name = topic_text[:topic_text.rfind('[')].strip()
+                topic_name = self._extract_topic_name(item.text())
                 self.saved_topics.discard(topic_name)
     
     def shutdown_plugin(self):
