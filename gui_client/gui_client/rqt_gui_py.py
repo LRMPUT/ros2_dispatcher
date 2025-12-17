@@ -1,115 +1,97 @@
 from rqt_gui_py.plugin import Plugin
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
-from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox, QStyledItemDelegate
+from PyQt5.QtGui import QColor, QPainter, QBrush
+from PyQt5.QtCore import QTimer, QRect
 import yaml
 from pathlib import Path
 from datetime import datetime
 
 # Import the service types from introspection_manager package
-from introspection_manager_msgs.srv import StartIntrospection, StopIntrospection, GetTopics
+from introspection_manager_msgs.srv import GetTopics
+
+class CustomItemDelegate(QStyledItemDelegate):
+    """Custom delegate to preserve item colors even when selected."""
+    def paint(self, painter, option, index):
+        painter.save()
+        
+        # Get the background color set for the item
+        bg_color = index.data(Qt.BackgroundRole)
+        if bg_color:
+            painter.fillRect(option.rect, bg_color)
+        
+        # Get text color
+        text_color = index.data(Qt.ForegroundRole)
+        if text_color:
+            painter.setPen(text_color)
+        
+        # Draw text
+        text = index.data(Qt.DisplayRole)
+        painter.drawText(option.rect, 0, text)
+        
+        painter.restore()
 
 class IntrospectionPlugin(Plugin):
     def __init__(self, context):
         super().__init__(context)
+        self.version_info = '0.0.1'
         self.setObjectName('IntrospectionPlugin')
         self._node = context.node  # Use the shared rclpy node provided by RQt
 
         # --- Build GUI layout ---
         self._widget = QWidget()
-        self._widget.setWindowTitle('Introspection Manager GUI')
+        self._widget.setWindowTitle(f'Introspection Manager GUI v{self.version_info}')
         layout = QVBoxLayout(self._widget)
         
-        # Start/Stop buttons
+        # First row: Save button | Start button | Unselect button
+        row1 = QHBoxLayout()
+        self.btn_save = QPushButton('Save Selected Topics')
         self.btn_start = QPushButton('Start Introspection')
+        self.btn_unselect = QPushButton('Unselect Saved')
+        row1.addWidget(self.btn_save)
+        row1.addWidget(self.btn_start)
+        row1.addWidget(self.btn_unselect)
+        layout.addLayout(row1)
+        
+        # Second row: Plugin button | Stop button
+        row2 = QHBoxLayout()
+        self.btn_plugin = QPushButton('Simulate Plugin Load/Unload')
         self.btn_stop = QPushButton('Stop Introspection')
-        layout.addWidget(self.btn_start)
-        layout.addWidget(self.btn_stop)
+        row2.addWidget(self.btn_plugin)
+        row2.addWidget(self.btn_stop)
+        layout.addLayout(row2)
         
         # Topic filter and list
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText('Filter topics...')
         layout.addWidget(self.filter_edit)
+        
+        # Update button
+        self.btn_update = QPushButton('Update Topics')
+        layout.addWidget(self.btn_update)
+        
         self.topic_list = QListWidget()
+        self.topic_list.setSelectionMode(QListWidget.MultiSelection)  # Enable multi-select
         layout.addWidget(self.topic_list)
-        
-        # Save selection (forward topics) button
-        self.btn_save = QPushButton('Save Selected Topics')
-        layout.addWidget(self.btn_save)
-        
-        # Plugin load/unload simulation button
-        self.btn_plugin = QPushButton('Simulate Plugin Load/Unload')
-        layout.addWidget(self.btn_plugin)
         
         # Finalize layout
         self._widget.setLayout(layout)
         context.add_widget(self._widget)  # Add the widget to the RQt UI dock
         
         # --- ROS 2 service clients ---
-        self.start_cli = self._node.create_client(StartIntrospection, 'start_introspection')
-        self.stop_cli  = self._node.create_client(StopIntrospection,  'stop_introspection')
-        self.get_topics_cli = self._node.create_client(GetTopics, 'get_topics')
+        self.get_topics_cli = self._node.create_client(GetTopics, '/introspection_manager_node/get_topics')
         
         # Connect button signals to handlers
-        self.btn_start.clicked.connect(self.handle_start)
-        self.btn_stop.clicked.connect(self.handle_stop)
+        self.btn_update.clicked.connect(self.update_topic_list)
         self.btn_save.clicked.connect(self.handle_save_selection)
+        self.btn_unselect.clicked.connect(self.handle_unselect_saved)
         self.btn_plugin.clicked.connect(self.handle_plugin_action)
         # Filter text -> update list
         self.filter_edit.textChanged.connect(self.filter_topics)
         
-        # Optionally, auto-refresh topic list periodically
-        self.timer = QTimer(self._widget)
-        self.timer.timeout.connect(self.update_topic_list)
-        self.timer.start(2000)  # e.g., refresh every 2 seconds (could adjust as needed)
-        
         # Store all topics for filtering
         self.all_topics = []
-    
-    def handle_start(self):
-        """Start introspection with service availability check."""
-        if not self.start_cli.wait_for_service(timeout_sec=1.0):
-            QMessageBox.critical(self._widget, "Error", "start_introspection service not available")
-            return
-        
-        request = StartIntrospection.Request()
-        future = self.start_cli.call_async(request)
-        future.add_done_callback(self._on_start_response)
-    
-    def _on_start_response(self, future):
-        """Callback for start introspection service response."""
-        try:
-            response = future.result()
-            if response.success:
-                QMessageBox.information(self._widget, "Success", "Introspection started successfully!")
-                self._node.get_logger().info("Introspection started")
-            else:
-                QMessageBox.warning(self._widget, "Warning", f"Start failed: {response.message}")
-        except Exception as e:
-            QMessageBox.critical(self._widget, "Error", f"Service call failed: {str(e)}")
-            self._node.get_logger().error(f"Start introspection failed: {e}")
-    
-    def handle_stop(self):
-        """Stop introspection with service availability check."""
-        if not self.stop_cli.wait_for_service(timeout_sec=1.0):
-            QMessageBox.critical(self._widget, "Error", "stop_introspection service not available")
-            return
-        
-        request = StopIntrospection.Request()
-        future = self.stop_cli.call_async(request)
-        future.add_done_callback(self._on_stop_response)
-    
-    def _on_stop_response(self, future):
-        """Callback for stop introspection service response."""
-        try:
-            response = future.result()
-            if response.success:
-                QMessageBox.information(self._widget, "Success", "Introspection stopped successfully!")
-                self._node.get_logger().info("Introspection stopped")
-            else:
-                QMessageBox.warning(self._widget, "Warning", f"Stop failed: {response.message}")
-        except Exception as e:
-            QMessageBox.critical(self._widget, "Error", f"Service call failed: {str(e)}")
-            self._node.get_logger().error(f"Stop introspection failed: {e}")
+        # Store saved topic names to preserve green coloring
+        self.saved_topics = set()
     
     def update_topic_list(self):
         """Fetch topics from introspection manager and update the list."""
@@ -128,7 +110,7 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
             # Store all topics
             self.all_topics = [(topic.name, topic.type) for topic in response.topics]
-            # Apply current filter
+            # Apply current filter (keeps selection intact)
             self.filter_topics()
         except Exception as e:
             self._node.get_logger().error(f"Get topics failed: {e}")
@@ -140,7 +122,13 @@ class IntrospectionPlugin(Plugin):
         
         for topic_name, topic_type in self.all_topics:
             if filter_text in topic_name.lower() or filter_text in topic_type.lower():
-                self.topic_list.addItem(f"{topic_name} [{topic_type}]")
+                item_text = f"{topic_name} [{topic_type}]"
+                self.topic_list.addItem(item_text)
+                # Restore green color if this topic was saved
+                if topic_name in self.saved_topics:
+                    item = self.topic_list.item(self.topic_list.count() - 1)
+                    item.setBackground(QColor(0, 128, 0))  # Green
+                    item.setForeground(QColor(255, 255, 255))  # White text
     
     def handle_save_selection(self):
         """Save selected topics to a YAML configuration file."""
@@ -195,6 +183,22 @@ class IntrospectionPlugin(Plugin):
             QMessageBox.information(self._widget, "Topics Saved", msg)
             self._node.get_logger().info(f"Saved {len(topics_config)} topics to {config_file}")
             
+            # Color saved topics green
+            for i in range(self.topic_list.count()):
+                item = self.topic_list.item(i)
+                for selected_item in selected_items:
+                    if item.text() == selected_item.text():
+                        item.setBackground(QColor(0, 128, 0))  # Green
+                        item.setForeground(QColor(255, 255, 255))  # White text
+                        # Extract topic name and add to saved set
+                        topic_text = item.text()
+                        topic_name = topic_text[:topic_text.rfind('[')].strip()
+                        self.saved_topics.add(topic_name)
+                        break
+            
+            # Auto-clear selection after save
+            self.topic_list.clearSelection()
+            
         except Exception as e:
             error_msg = f"Failed to save topics configuration:\n{str(e)}"
             QMessageBox.critical(self._widget, "Error", error_msg)
@@ -204,12 +208,22 @@ class IntrospectionPlugin(Plugin):
         """Simulate plugin load/unload (placeholder)."""
         QMessageBox.information(self._widget, "Plugin Action", "Plugin load/unload simulation (not implemented)")
     
+    def handle_unselect_saved(self):
+        """Clear green highlighting only from selected items."""
+        selected_items = self.topic_list.selectedItems()
+        for item in selected_items:
+            # Check if item has green background
+            if item.background().color() == QColor(0, 128, 0):
+                item.setBackground(QColor(255, 255, 255))  # Reset to white
+                item.setForeground(QColor(0, 0, 0))  # Reset to black text
+                # Remove from saved set
+                topic_text = item.text()
+                topic_name = topic_text[:topic_text.rfind('[')].strip()
+                self.saved_topics.discard(topic_name)
+    
     def shutdown_plugin(self):
         """Called when the plugin is being shut down."""
-        self.timer.stop()
         # Destroy service clients
-        self._node.destroy_client(self.start_cli)
-        self._node.destroy_client(self.stop_cli)
         self._node.destroy_client(self.get_topics_cli)
     
     def save_settings(self, plugin_settings, instance_settings):
