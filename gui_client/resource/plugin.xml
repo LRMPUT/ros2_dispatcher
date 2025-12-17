@@ -1,0 +1,7 @@
+<library path="gui_client">
+  <class name="IntrospectionGuiPlugin" type="gui_client.plugin:IntrospectionGuiPlugin" base_class_type="rqt_gui_py::Plugin">
+    <description>
+      GUI client for the ROS 2 Kafka Dispatcher introspection manager.
+    </description>
+  </class>
+</library>
