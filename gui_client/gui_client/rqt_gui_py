@@ -1,0 +1,175 @@
+from rqt_gui_py.plugin import Plugin
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
+from PyQt5.QtCore import QTimer
+
+# Import the service types from introspection_manager package
+from introspection_manager_msgs.srv import StartIntrospection, StopIntrospection, GetTopics
+
+class IntrospectionPlugin(Plugin):
+    def __init__(self, context):
+        super().__init__(context)
+        self.setObjectName('IntrospectionPlugin')
+        self._node = context.node  # Use the shared rclpy node provided by RQt:contentReference[oaicite:11]{index=11}
+
+        # --- Build GUI layout ---
+        self._widget = QWidget()
+        self._widget.setWindowTitle('Introspection Manager GUI')
+        layout = QVBoxLayout(self._widget)
+        
+        # Start/Stop buttons
+        self.btn_start = QPushButton('Start Introspection')
+        self.btn_stop = QPushButton('Stop Introspection')
+        layout.addWidget(self.btn_start)
+        layout.addWidget(self.btn_stop)
+        
+        # Topic filter and list
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText('Filter topics...')
+        layout.addWidget(self.filter_edit)
+        self.topic_list = QListWidget()
+        layout.addWidget(self.topic_list)
+        
+        # Save selection (forward topics) button
+        self.btn_save = QPushButton('Save Selected Topics')
+        layout.addWidget(self.btn_save)
+        
+        # Plugin load/unload simulation button
+        self.btn_plugin = QPushButton('Simulate Plugin Load/Unload')
+        layout.addWidget(self.btn_plugin)
+        
+        # Finalize layout
+        self._widget.setLayout(layout)
+        context.add_widget(self._widget)  # Add the widget to the RQt UI dock:contentReference[oaicite:12]{index=12}
+        
+        # --- ROS 2 service clients ---
+        self.start_cli = self._node.create_client(StartIntrospection, 'start_introspection')
+        self.stop_cli  = self._node.create_client(StopIntrospection,  'stop_introspection')
+        self.get_topics_cli = self._node.create_client(GetTopics, 'get_topics')
+        
+        # Connect button signals to handlers
+        self.btn_start.clicked.connect(self.handle_start)
+        self.btn_stop.clicked.connect(self.handle_stop)
+        self.btn_save.clicked.connect(self.handle_save_selection)
+        self.btn_plugin.clicked.connect(self.handle_plugin_action)
+        # Filter text -> update list
+        self.filter_edit.textChanged.connect(self.filter_topics)
+        
+        # Optionally, auto-refresh topic list periodically
+        self.timer = QTimer(self._widget)
+        self.timer.timeout.connect(self.update_topic_list)
+        self.timer.start(2000)  # e.g., refresh every 2 seconds (could adjust as needed)
+        
+        # Store all topics for filtering
+        self.all_topics = []
+    
+    def handle_start(self):
+        """Start introspection with service availability check."""
+        if not self.start_cli.wait_for_service(timeout_sec=1.0):
+            QMessageBox.critical(self._widget, "Error", "start_introspection service not available")
+            return
+        
+        request = StartIntrospection.Request()
+        future = self.start_cli.call_async(request)
+        future.add_done_callback(self._on_start_response)
+    
+    def _on_start_response(self, future):
+        """Callback for start introspection service response."""
+        try:
+            response = future.result()
+            if response.success:
+                QMessageBox.information(self._widget, "Success", "Introspection started successfully!")
+                self._node.get_logger().info("Introspection started")
+            else:
+                QMessageBox.warning(self._widget, "Warning", f"Start failed: {response.message}")
+        except Exception as e:
+            QMessageBox.critical(self._widget, "Error", f"Service call failed: {str(e)}")
+            self._node.get_logger().error(f"Start introspection failed: {e}")
+    
+    def handle_stop(self):
+        """Stop introspection with service availability check."""
+        if not self.stop_cli.wait_for_service(timeout_sec=1.0):
+            QMessageBox.critical(self._widget, "Error", "stop_introspection service not available")
+            return
+        
+        request = StopIntrospection.Request()
+        future = self.stop_cli.call_async(request)
+        future.add_done_callback(self._on_stop_response)
+    
+    def _on_stop_response(self, future):
+        """Callback for stop introspection service response."""
+        try:
+            response = future.result()
+            if response.success:
+                QMessageBox.information(self._widget, "Success", "Introspection stopped successfully!")
+                self._node.get_logger().info("Introspection stopped")
+            else:
+                QMessageBox.warning(self._widget, "Warning", f"Stop failed: {response.message}")
+        except Exception as e:
+            QMessageBox.critical(self._widget, "Error", f"Service call failed: {str(e)}")
+            self._node.get_logger().error(f"Stop introspection failed: {e}")
+    
+    def update_topic_list(self):
+        """Fetch topics from introspection manager and update the list."""
+        if not self.get_topics_cli.wait_for_service(timeout_sec=0.5):
+            # Don't show error dialog for periodic updates, just log
+            self._node.get_logger().warn("get_topics service not available")
+            return
+        
+        request = GetTopics.Request()
+        future = self.get_topics_cli.call_async(request)
+        future.add_done_callback(self._on_get_topics_response)
+    
+    def _on_get_topics_response(self, future):
+        """Callback for get_topics service response."""
+        try:
+            response = future.result()
+            # Store all topics
+            self.all_topics = [(topic.name, topic.type) for topic in response.topics]
+            # Apply current filter
+            self.filter_topics()
+        except Exception as e:
+            self._node.get_logger().error(f"Get topics failed: {e}")
+    
+    def filter_topics(self):
+        """Filter the topic list based on the filter text."""
+        filter_text = self.filter_edit.text().lower()
+        self.topic_list.clear()
+        
+        for topic_name, topic_type in self.all_topics:
+            if filter_text in topic_name.lower() or filter_text in topic_type.lower():
+                self.topic_list.addItem(f"{topic_name} [{topic_type}]")
+    
+    def handle_save_selection(self):
+        """Save selected topics (placeholder for forwarding logic)."""
+        selected_items = self.topic_list.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self._widget, "Info", "No topics selected")
+            return
+        
+        selected_topics = [item.text() for item in selected_items]
+        # TODO: Implement forwarding/saving logic here
+        msg = f"Selected {len(selected_topics)} topic(s):\n" + "\n".join(selected_topics[:5])
+        if len(selected_topics) > 5:
+            msg += f"\n... and {len(selected_topics) - 5} more"
+        QMessageBox.information(self._widget, "Topics Selected", msg)
+        self._node.get_logger().info(f"Selected topics: {selected_topics}")
+    
+    def handle_plugin_action(self):
+        """Simulate plugin load/unload (placeholder)."""
+        QMessageBox.information(self._widget, "Plugin Action", "Plugin load/unload simulation (not implemented)")
+    
+    def shutdown_plugin(self):
+        """Called when the plugin is being shut down."""
+        self.timer.stop()
+        # Destroy service clients
+        self._node.destroy_client(self.start_cli)
+        self._node.destroy_client(self.stop_cli)
+        self._node.destroy_client(self.get_topics_cli)
+    
+    def save_settings(self, plugin_settings, instance_settings):
+        """Save plugin settings (optional)."""
+        pass
+    
+    def restore_settings(self, plugin_settings, instance_settings):
+        """Restore plugin settings (optional)."""
+        pass

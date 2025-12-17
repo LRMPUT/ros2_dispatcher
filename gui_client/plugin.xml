@@ -1,0 +1,9 @@
+<library path="gui_client">  
+  <class name="IntrospectionGUI" type="gui_client.introspection_plugin.IntrospectionPlugin" base_class_type="rqt_gui_py::Plugin">  
+    <description>GUI for introspection manager (start/stop introspection, select topics).</description>  
+    <qtgui>  
+      <label>Introspection Manager GUI</label>  
+      <group><label>Introspection</label></group>  
+    </qtgui>  
+  </class>  
+</library>
