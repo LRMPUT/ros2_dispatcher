@@ -9,7 +9,11 @@ ament_auto_find_build_dependencies()
 set(msg_files
   "msg/TopicInfo.msg"
   "msg/TopicsInfo.msg"
+  "msg/PluginInstance.msg"
   "srv/GetTopics.srv"
+  "srv/ApplyPipeline.srv"
+  "srv/StopPipeline.srv"
+  "srv/GetPipelineStatus.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

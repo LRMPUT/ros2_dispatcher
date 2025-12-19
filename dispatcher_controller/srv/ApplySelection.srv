@@ -1,0 +1,5 @@
+# GUI-provided selection of topics to stream. Valid only when selection_mode == "gui".
+introspection_manager_msgs/TopicInfo[] topics
+---
+bool success
+string message
