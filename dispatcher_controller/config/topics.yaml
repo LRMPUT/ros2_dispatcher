@@ -1,0 +1,4 @@
+- topic_name: /camera/image_raw
+  msg_type: sensor_msgs/msg/Image
+- topic_name: /cmd_vel
+  msg_type: geometry_msgs/msg/Twist

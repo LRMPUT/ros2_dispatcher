@@ -6,7 +6,7 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='dispatcher_controller',
-            executable='dispatcher_controller_node',
+            executable='dispatcher_controller_node_exe',
             name='dispatcher_controller',
             output='screen',
             parameters=[{

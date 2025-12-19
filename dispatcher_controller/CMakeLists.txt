@@ -45,13 +45,22 @@ ament_target_dependencies(dispatcher_controller_node
   yaml-cpp
 )
 
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(dispatcher_controller_node "${cpp_typesupport_target}")
+
 rclcpp_components_register_nodes(dispatcher_controller_node "dispatcher_controller::DispatcherControllerNode")
 
-install(TARGETS dispatcher_controller_node
+# Create executable
+add_executable(dispatcher_controller_node_exe src/main.cpp)
+target_link_libraries(dispatcher_controller_node_exe dispatcher_controller_node yaml-cpp)
+ament_target_dependencies(dispatcher_controller_node_exe rclcpp rclcpp_components)
+
+install(TARGETS dispatcher_controller_node dispatcher_controller_node_exe
   EXPORT export_dispatcher_controller_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin)
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
   DESTINATION include)
