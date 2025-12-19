@@ -15,6 +15,8 @@ def generate_launch_description():
     qos_depth = LaunchConfiguration("qos_depth")
     container_name = LaunchConfiguration("container_name")
     container_namespace = LaunchConfiguration("container_namespace")
+    controller_log_level = LaunchConfiguration("controller_log_level")
+    kafka_sink_log_level = LaunchConfiguration("kafka_sink_log_level")
 
     dispatcher_param_file = PathJoinSubstitution(
         [
@@ -55,6 +57,7 @@ def generate_launch_description():
                         package="kafka_sink",
                         plugin="kafka_sink::KafkaSinkNode",
                         name="kafka_sink",
+                        extra_arguments=[{"--ros-args": ["--log-level", kafka_sink_log_level]}],
                         parameters=[
                             kafka_param_file,
                             {
@@ -67,6 +70,7 @@ def generate_launch_description():
                         package="dispatcher_controller",
                         plugin="dispatcher_controller::DispatcherControllerNode",
                         name="dispatcher_controller",
+                        extra_arguments=[{"--ros-args": ["--log-level", controller_log_level]}],
                         parameters=[
                             dispatcher_param_file,
                             {

@@ -12,6 +12,8 @@ def generate_launch_description():
     validate_topics = LaunchConfiguration("validate_topics")
     subscriptions_yaml = LaunchConfiguration("subscriptions_yaml")
     qos_depth = LaunchConfiguration("qos_depth")
+    controller_log_level = LaunchConfiguration("controller_log_level")
+    kafka_sink_log_level = LaunchConfiguration("kafka_sink_log_level")
 
     dispatcher_launch = PathJoinSubstitution(
         [
@@ -36,6 +38,8 @@ def generate_launch_description():
             DeclareLaunchArgument("validate_topics", default_value="false"),
             DeclareLaunchArgument("subscriptions_yaml", default_value=""),
             DeclareLaunchArgument("qos_depth", default_value="10"),
+            DeclareLaunchArgument("controller_log_level", default_value="debug"),
+            DeclareLaunchArgument("kafka_sink_log_level", default_value="info"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(dispatcher_launch),
                 launch_arguments={
@@ -43,6 +47,7 @@ def generate_launch_description():
                     "selection_file_path": selection_file_path,
                     "kafka_sink_node_name": kafka_sink_node_name,
                     "validate_topics": validate_topics,
+                    "log_level": controller_log_level,
                 }.items(),
             ),
             IncludeLaunchDescription(
@@ -51,6 +56,7 @@ def generate_launch_description():
                     "subscriptions_yaml": subscriptions_yaml,
                     "qos_depth": qos_depth,
                     "use_composition": "false",
+                    "log_level": kafka_sink_log_level,
                 }.items(),
             ),
         ]

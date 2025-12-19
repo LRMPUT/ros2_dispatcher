@@ -11,6 +11,7 @@ def generate_launch_description():
     kafka_sink_node_name = LaunchConfiguration("kafka_sink_node_name")
     validate_topics = LaunchConfiguration("validate_topics")
     param_file = LaunchConfiguration("param_file")
+    log_level = LaunchConfiguration("log_level")
 
     return LaunchDescription(
         [
@@ -18,6 +19,7 @@ def generate_launch_description():
             DeclareLaunchArgument("selection_file_path", default_value=""),
             DeclareLaunchArgument("kafka_sink_node_name", default_value="/kafka_sink"),
             DeclareLaunchArgument("validate_topics", default_value="false"),
+            DeclareLaunchArgument("log_level", default_value="info"),
             DeclareLaunchArgument(
                 "param_file",
                 default_value=PathJoinSubstitution(
@@ -33,6 +35,7 @@ def generate_launch_description():
                 executable="dispatcher_controller_node_exe",
                 name="dispatcher_controller",
                 output="screen",
+                arguments=["--ros-args", "--log-level", log_level],
                 parameters=[
                     param_file,
                     {

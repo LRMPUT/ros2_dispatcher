@@ -14,6 +14,7 @@ def generate_launch_description():
     subscriptions_yaml = LaunchConfiguration("subscriptions_yaml")
     qos_depth = LaunchConfiguration("qos_depth")
     param_file = LaunchConfiguration("param_file")
+    log_level = LaunchConfiguration("log_level")
 
     arguments = [
         DeclareLaunchArgument("use_composition", default_value="false"),
@@ -21,6 +22,7 @@ def generate_launch_description():
         DeclareLaunchArgument("container_namespace", default_value=""),
         DeclareLaunchArgument("subscriptions_yaml", default_value=""),
         DeclareLaunchArgument("qos_depth", default_value="10"),
+        DeclareLaunchArgument("log_level", default_value="info"),
         DeclareLaunchArgument(
             "param_file",
             default_value=PathJoinSubstitution(
@@ -55,10 +57,11 @@ def generate_launch_description():
                         package="kafka_sink",
                         plugin="kafka_sink::KafkaSinkNode",
                         name="kafka_sink",
+                        extra_arguments=[{"--ros-args": ["--log-level", log_level]}],
                         parameters=kafka_sink_parameters,
                     ),
                 ],
-            ),
+            )
         ],
     )
 
@@ -68,6 +71,7 @@ def generate_launch_description():
         executable="kafka_sink_node_exe",
         name="kafka_sink",
         output="screen",
+        arguments=["--ros-args", "--log-level", log_level],
         parameters=kafka_sink_parameters,
     )
 
