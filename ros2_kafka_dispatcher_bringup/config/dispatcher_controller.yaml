@@ -1,0 +1,12 @@
+/**:
+  ros__parameters:
+    selection_mode: file
+    selection_file_path: ""  # e.g., /path/to/selection_example.yaml
+    kafka_sink_node_name: /kafka_sink
+    validate_topics: false
+    auto_apply_on_mode_change: true
+    disable_introspection_after_apply: true
+    introspection_node_name: /introspection_manager
+    introspection_service_name: /introspection_manager/get_topics
+    all_mode_max_topics: 200
+    all_mode_hide_rosout: true

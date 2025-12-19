@@ -1,0 +1,4 @@
+- topic_name: /demo/chatter
+  msg_type: std_msgs/msg/String
+- topic_name: /demo/number
+  msg_type: std_msgs/msg/Int32
