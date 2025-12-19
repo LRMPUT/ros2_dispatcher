@@ -1,0 +1,8 @@
+# Desired pipeline specification to be applied by the dispatcher_controller.
+introspection_manager_msgs/TopicInfo[] subscriptions
+introspection_manager_msgs/PluginInstance[] plugins
+# Reserved for future kafka mapping configuration (YAML formatted string)
+string kafka_mapping_yaml
+---
+bool success
+string message

@@ -1,0 +1,5 @@
+# Deactivate kafka_sink; optionally reset cached selections.
+bool reset_cached
+---
+bool success
+string message
