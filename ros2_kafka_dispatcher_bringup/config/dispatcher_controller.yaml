@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     selection_mode: file
-    selection_file_path: ""  # e.g., /path/to/selection_example.yaml
+    selection_file_path: ""
     kafka_sink_node_name: /kafka_sink
     validate_topics: false
     auto_apply_on_mode_change: true

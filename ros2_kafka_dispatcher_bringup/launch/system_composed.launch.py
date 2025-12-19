@@ -1,7 +1,8 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import ComposableNode, ComposableNodeContainer
+from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes
+from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -42,14 +43,15 @@ def generate_launch_description():
             DeclareLaunchArgument("qos_depth", default_value="10"),
             DeclareLaunchArgument("container_name", default_value="ros2_kafka_dispatcher_container"),
             DeclareLaunchArgument("container_namespace", default_value=""),
-            DeclareLaunchArgument("controller_log_level", default_value="debug"),
-            DeclareLaunchArgument("kafka_sink_log_level", default_value="info"),
             ComposableNodeContainer(
                 name=container_name,
                 namespace=container_namespace,
                 package="rclcpp_components",
                 executable="component_container_mt",
                 output="screen",
+            ),
+            LoadComposableNodes(
+                target_container=container_name,
                 composable_node_descriptions=[
                     ComposableNode(
                         package="kafka_sink",
