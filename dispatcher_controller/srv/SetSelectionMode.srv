@@ -1,0 +1,7 @@
+# Switch the active selection mode.
+string selection_mode
+string selection_file_path
+bool apply_now
+---
+bool success
+string message

@@ -1,0 +1,14 @@
+# Returns controller status and cached selections.
+---
+bool success
+string message
+string selection_mode
+bool streaming_active
+string kafka_sink_state
+introspection_manager_msgs/TopicInfo[] applied_topics
+uint32 gui_selection_count
+uint32 file_selection_count
+uint32 all_selection_count
+string last_error
+builtin_interfaces/Time last_error_stamp
+bool reconciling
