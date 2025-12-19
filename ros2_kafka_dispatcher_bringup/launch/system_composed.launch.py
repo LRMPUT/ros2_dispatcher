@@ -1,7 +1,8 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import ComposableNode, ComposableNodeContainer
+from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes
+from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -46,6 +47,9 @@ def generate_launch_description():
                 package="rclcpp_components",
                 executable="component_container_mt",
                 output="screen",
+            ),
+            LoadComposableNodes(
+                target_container=container_name,
                 composable_node_descriptions=[
                     ComposableNode(
                         package="kafka_sink",
