@@ -24,7 +24,7 @@ TEST(ParseSubscriptions, ValidYamlParses) {
   - topic_name: /foo
     msg_type: std_msgs/msg/String
   - topic_name: /bar
-    msg_type: example_interfaces/msg/Int32
+    msg_type: std_msgs/msg/Int32
   )";
 
   auto result = kafka_sink::parse_subscriptions_yaml(yaml_text);
@@ -32,7 +32,7 @@ TEST(ParseSubscriptions, ValidYamlParses) {
   EXPECT_EQ(result[0].topic_name, "/foo");
   EXPECT_EQ(result[0].msg_type, "std_msgs/msg/String");
   EXPECT_EQ(result[1].topic_name, "/bar");
-  EXPECT_EQ(result[1].msg_type, "example_interfaces/msg/Int32");
+  EXPECT_EQ(result[1].msg_type, "std_msgs/msg/Int32");
 }
 
 TEST(ParseSubscriptions, InvalidYamlThrows) {

@@ -45,7 +45,7 @@ ros2 lifecycle set /kafka_sink deactivate
   - topic_name: /demo/chatter
     msg_type: std_msgs/msg/String
   - topic_name: /demo/number
-    msg_type: example_interfaces/msg/Int32
+    msg_type: std_msgs/msg/Int32
   ```
 - `qos_depth` (int, default 10): Depth for the QoS profile (KeepLast).
 

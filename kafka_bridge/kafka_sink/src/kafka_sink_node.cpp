@@ -271,7 +271,7 @@ bool KafkaSinkNode::validate_qos_depth(int qos_depth, std::string * error_messag
 
 rclcpp::QoS KafkaSinkNode::build_qos_profile() const
 {
-  rclcpp::QoS qos(rclcpp::SystemDefaultsQoS());
+  rclcpp::QoS qos{rclcpp::SystemDefaultsQoS()};
   qos.keep_last(static_cast<size_t>(qos_depth_));
   return qos;
 }
