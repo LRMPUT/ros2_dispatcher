@@ -1,0 +1,4 @@
+# Request is empty; the dispatcher_controller should stop the current pipeline.
+---
+bool success
+string message

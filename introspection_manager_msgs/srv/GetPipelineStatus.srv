@@ -1,0 +1,9 @@
+# Request is empty; returns current pipeline status.
+---
+bool success
+string message
+string kafka_sink_state
+introspection_manager_msgs/TopicInfo[] active_subscriptions
+introspection_manager_msgs/PluginInstance[] active_plugins
+string last_error
+bool reconciling
