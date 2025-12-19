@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025 Maciej Krupka
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +18,8 @@ from launch.actions import DeclareLaunchArgument
 from launch.actions import OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
-from launch_ros.actions import Node
+from launch_ros.actions import ComposableNodeContainer
+from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -28,20 +30,24 @@ def launch_setup(context, *args, **kwargs):
             [FindPackageShare('kafka_sink'), 'config', 'kafka_sink.param.yaml']
         ).perform(context)
 
-    kafka_sink_node = Node(
+    kafka_sink_node = ComposableNode(
         package='kafka_sink',
-        executable='kafka_sink_node_exe',
-        name='kafka_sink_node',
-        parameters=[
-            param_path
-        ],
-        output='screen',
-        arguments=['--ros-args', '--log-level', 'info', '--enable-stdout-logs'],
+        plugin='kafka_sink::KafkaSinkNode',
+        name='kafka_sink',
+        parameters=[param_path],
+        extra_arguments=[{'use_intra_process_comms': True}],
     )
 
-    return [
-        kafka_sink_node
-    ]
+    container = ComposableNodeContainer(
+        name='kafka_sink_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container_mt',
+        composable_node_descriptions=[kafka_sink_node],
+        output='screen',
+    )
+
+    return [container]
 
 
 def generate_launch_description():
@@ -56,5 +62,5 @@ def generate_launch_description():
 
     return LaunchDescription([
         *declared_arguments,
-        OpaqueFunction(function=launch_setup)
+        OpaqueFunction(function=launch_setup),
     ])

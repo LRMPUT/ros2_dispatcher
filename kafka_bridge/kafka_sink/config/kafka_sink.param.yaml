@@ -1,3 +1,8 @@
 /**:
   ros__parameters:
-    param_name: 789
+    qos_depth: 10
+    subscriptions_yaml: |
+      - topic_name: /demo/chatter
+        msg_type: std_msgs/msg/String
+      - topic_name: /demo/number
+        msg_type: example_interfaces/msg/Int32

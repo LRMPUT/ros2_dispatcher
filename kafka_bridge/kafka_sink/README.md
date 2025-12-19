@@ -1,57 +1,65 @@
 # kafka_sink
-<!-- Required -->
-<!-- Package description -->
 
-## Installation
-<!-- Required -->
-<!-- Things to consider:
-    - How to build package? 
-    - Are there any other 3rd party dependencies required? -->
+Lifecycle-based Kafka sink node that dynamically subscribes to topics and logs serialized message
+sizes. The current implementation is transport-agnostic and ready to be extended with Kafka
+delivery.
+
+## Build
 
 ```bash
 rosdep install --from-paths src --ignore-src -y
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=On --packages-up-to kafka_sink
+source install/setup.bash
 ```
 
-## Usage
-<!-- Required -->
-<!-- Things to consider:
-    - Launching package. 
-    - Exposed API (example service/action call. -->
+## Launch as a component
+
+Start the node inside a component container:
 
 ```bash
-ros2 launch kafka_sink kafka_sink.launch.py
+ros2 launch kafka_sink kafka_sink_container.launch.py
 ```
 
-## API
-<!-- Required -->
-<!-- Things to consider:
-    - How do you use the package / API? -->
+The launch file loads the `kafka_sink::KafkaSinkNode` into `component_container_mt` with parameters
+from `config/kafka_sink.param.yaml` by default.
 
-### Input
+## Lifecycle control
 
-| Name         | Type                  | Description  |
-| ------------ | --------------------- | ------------ |
-| `topic_name` | std_msgs::msg::String | Sample desc. |
+Configure and activate the node:
 
-### Output
+```bash
+ros2 lifecycle set /kafka_sink configure
+ros2 lifecycle set /kafka_sink activate
+```
 
-| Name         | Type                  | Description  |
-| ------------ | --------------------- | ------------ |
-| `topic_name` | std_msgs::msg::String | Sample desc. |
+Deactivate to stop all subscriptions and DDS traffic:
 
-### Services and Actions
+```bash
+ros2 lifecycle set /kafka_sink deactivate
+```
 
-| Name           | Type                   | Description  |
-| -------------- | ---------------------- | ------------ |
-| `service_name` | std_srvs::srv::Trigger | Sample desc. |
+## Parameters
 
-### Parameters
+- `subscriptions_yaml` (string): YAML sequence describing subscriptions. Example:
+  ```yaml
+  - topic_name: /demo/chatter
+    msg_type: std_msgs/msg/String
+  - topic_name: /demo/number
+    msg_type: example_interfaces/msg/Int32
+  ```
+- `qos_depth` (int, default 10): Depth for the QoS profile (KeepLast).
 
-| Name         | Type | Description  |
-| ------------ | ---- | ------------ |
-| `param_name` | int  | Sample desc. |
+You can update `subscriptions_yaml` while the node is inactive. When the node is active the update
+is rejected with the message `deactivate first`.
 
+Set parameters at runtime:
 
-## References / External links
-<!-- Optional -->
+```bash
+ros2 param set /kafka_sink subscriptions_yaml "[{'topic_name': '/foo', 'msg_type': 'std_msgs/msg/String'}]"
+```
+
+## Notes
+
+- Subscriptions are created on activation and destroyed on deactivation/cleanup/shutdown.
+- Each received serialized message is logged at most once per second per topic with topic name and
+  byte size.
