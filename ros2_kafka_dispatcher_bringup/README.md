@@ -50,3 +50,16 @@ ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
   selection_mode:=file \
   selection_file_path:=\"$(ros2 pkg prefix ros2_kafka_dispatcher_bringup)/share/ros2_kafka_dispatcher_bringup/config/selection_example.yaml\"
 ```
+
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+  selection_mode:=file selection_file_path:=/path/to/selection.yaml
+```
+
+Composable container bringup (single process):
+
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_composed.launch.py
+```
+
+GUI mode can be enabled later by switching `selection_mode:=gui` on the dispatcher_controller; the GUI itself is not launched by this package.
