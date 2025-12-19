@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    qos_depth: 10
+    subscriptions_yaml: ""

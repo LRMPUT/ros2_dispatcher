@@ -1,57 +1,64 @@
 # ros2_kafka_dispatcher_bringup
-<!-- Required -->
-<!-- Package description -->
 
-## Installation
-<!-- Required -->
-<!-- Things to consider:
-    - How to build package? 
-    - Are there any other 3rd party dependencies required? -->
+Launcher and configuration package for bringing up the ros2_kafka_dispatcher system. It provides launch files and default parameter YAMLs for starting the dispatcher controller and kafka sink nodes in either standalone or composed setups.
+
+## Build
 
 ```bash
 rosdep install --from-paths src --ignore-src -y
 colcon build --symlink-install --packages-up-to ros2_kafka_dispatcher_bringup
 ```
 
-## Usage
-<!-- Required -->
-<!-- Things to consider:
-    - Launching package. 
-    - Exposed API (example service/action call. -->
+## Launching
+
+Minimal two-node bringup:
 
 ```bash
-ros2 launch ros2_kafka_dispatcher_bringup ros2_kafka_dispatcher_bringup.launch.py
+ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py
 ```
 
-## API
-<!-- Required -->
-<!-- Things to consider:
-    - How do you use the package / API? -->
+Start in file-selection mode with an explicit selection file:
 
-### Input
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+  selection_mode:=file selection_file_path:=/path/to/selection.yaml
+```
 
-| Name         | Type                  | Description  |
-| ------------ | --------------------- | ------------ |
-| `topic_name` | std_msgs::msg::String | Sample desc. |
+Enable verbose logging to troubleshoot selection loading and lifecycle transitions:
 
-### Output
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+  selection_mode:=file \
+  selection_file_path:=/path/to/selection.yaml \
+  controller_log_level:=debug \
+  kafka_sink_log_level:=debug
+```
 
-| Name         | Type                  | Description  |
-| ------------ | --------------------- | ------------ |
-| `topic_name` | std_msgs::msg::String | Sample desc. |
+Composable container bringup (single process):
 
-### Services and Actions
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_composed.launch.py
+```
 
-| Name           | Type                   | Description  |
-| -------------- | ---------------------- | ------------ |
-| `service_name` | std_srvs::srv::Trigger | Sample desc. |
+GUI mode can be enabled later by switching `selection_mode:=gui` on the dispatcher_controller; the GUI itself is not launched by this package.
 
-### Parameters
+## Configuration
 
-| Name         | Type | Description  |
-| ------------ | ---- | ------------ |
-| `param_name` | int  | Sample desc. |
+Default parameter YAMLs live in `config/`. `config/selection_example.yaml` contains a dispatcher-compatible file-mode selection:
 
+```yaml
+- topic_name: /demo/chatter
+  msg_type: std_msgs/msg/String
+- topic_name: /demo/number
+  msg_type: std_msgs/msg/Int32
+```
 
-## References / External links
-<!-- Optional -->
+When launching in file mode, point `selection_file_path` at this example (or your own file) to start streaming immediately:
+
+```bash
+ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+  selection_mode:=file \
+  selection_file_path:=\"$(ros2 pkg prefix ros2_kafka_dispatcher_bringup)/share/ros2_kafka_dispatcher_bringup/config/selection_example.yaml\"
+```
+
+For a deeper, step-by-step walkthrough (including troubleshooting tips and common overrides), see [`docs/tutorial.md`](docs/tutorial.md).
