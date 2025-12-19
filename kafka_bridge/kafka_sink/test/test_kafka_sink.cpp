@@ -12,12 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gtest/gtest.h"
-#include "kafka_sink/kafka_sink.hpp"
+#include <stdexcept>
+#include <string>
+#include <vector>
 
-TEST(TestKafkaSink, TestHello) {
-  std::unique_ptr<kafka_sink::KafkaSink> kafka_sink_ =
-    std::make_unique<kafka_sink::KafkaSink>();
-  auto result = kafka_sink_->foo(999);
-  EXPECT_EQ(result, 999);
+#include "gtest/gtest.h"
+#include "kafka_sink/kafka_sink_node.hpp"
+
+TEST(ParseSubscriptions, ValidYamlParses) {
+  const std::string yaml_text = R"(
+  - topic_name: /foo
+    msg_type: std_msgs/msg/String
+  - topic_name: /bar
+    msg_type: example_interfaces/msg/Int32
+  )";
+
+  auto result = kafka_sink::parse_subscriptions_yaml(yaml_text);
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0].topic_name, "/foo");
+  EXPECT_EQ(result[0].msg_type, "std_msgs/msg/String");
+  EXPECT_EQ(result[1].topic_name, "/bar");
+  EXPECT_EQ(result[1].msg_type, "example_interfaces/msg/Int32");
+}
+
+TEST(ParseSubscriptions, InvalidYamlThrows) {
+  const std::string yaml_text = R"(
+  - topic_name: ""
+    msg_type: std_msgs/msg/String
+  )";
+
+  EXPECT_THROW(kafka_sink::parse_subscriptions_yaml(yaml_text), std::runtime_error);
 }

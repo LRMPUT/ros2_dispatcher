@@ -3,15 +3,18 @@
 <package format="3">
   <name>kafka_sink</name>
   <version>1.0.0</version>
-  <description>INSERT_DESCRIPTION</description>
+  <description>Lifecycle-based Kafka sink that dynamically subscribes to configured topics.</description>
   <maintainer email="maciej.krupka@put.poznan.pl">Maciej Krupka</maintainer>
   <license>Apache License 2.0</license>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>launch_ros</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>rclcpp_components</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>yaml-cpp</depend>
+  <depend>launch_ros</depend>
 
   <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>
