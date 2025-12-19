@@ -44,7 +44,7 @@ enum class SelectionMode
 struct SelectionSnapshot
 {
   std::vector<introspection_manager_msgs::msg::TopicInfo> topics;
-  rclcpp::Time timestamp;
+  rclcpp::Time timestamp{0, 0, RCL_SYSTEM_TIME};
 };
 
 class DispatcherControllerNode : public rclcpp::Node

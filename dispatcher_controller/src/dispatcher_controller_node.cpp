@@ -26,8 +26,10 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   selection_file_path_ = declare_parameter<std::string>("selection_file_path", "");
   auto_apply_on_mode_change_ = declare_parameter<bool>("auto_apply_on_mode_change", true);
   all_mode_max_topics_ = declare_parameter<int>("all_mode_max_topics", 200);
-  all_mode_allowlist_ = declare_parameter<std::vector<std::string>>("all_mode_allowlist", {});
-  all_mode_denylist_ = declare_parameter<std::vector<std::string>>("all_mode_denylist", {});
+  all_mode_allowlist_ = declare_parameter<std::vector<std::string>>(
+    "all_mode_allowlist", rclcpp::ParameterValue(std::vector<std::string>{}));
+  all_mode_denylist_ = declare_parameter<std::vector<std::string>>(
+    "all_mode_denylist", rclcpp::ParameterValue(std::vector<std::string>{}));
   all_mode_hide_rosout_ = declare_parameter<bool>("all_mode_hide_rosout", true);
 
   bool valid_mode{true};
@@ -305,12 +307,12 @@ void DispatcherControllerNode::handle_stop_streaming(
   }
 
   if (request->reset_cached) {
-    last_gui_selection_ = {};
-    last_file_selection_ = {};
-    last_all_selection_ = {};
+    last_gui_selection_ = SelectionSnapshot{};
+    last_file_selection_ = SelectionSnapshot{};
+    last_all_selection_ = SelectionSnapshot{};
   }
 
-  applied_selection_ = {};
+  applied_selection_ = SelectionSnapshot{};
   phase_ = ControllerPhase::IDLE;
   response->success = true;
   response->message = "Streaming stopped";
