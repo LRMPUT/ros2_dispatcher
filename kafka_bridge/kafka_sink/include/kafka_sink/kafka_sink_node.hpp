@@ -17,9 +17,12 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "kafka_client/kafka_producer.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -51,10 +54,37 @@ public:
   CallbackReturn on_shutdown(const rclcpp_lifecycle::State & state) override;
 
 private:
+  enum class TopicMappingMode
+  {
+    PREFIX_ROS_TOPIC,
+    FIXED
+  };
+
+  struct KafkaParameters
+  {
+    std::string bootstrap_servers{"localhost:9092"};
+    std::string client_id{"kafka_sink"};
+    std::string acks{"all"};
+    std::string topic_prefix{"ros2"};
+    TopicMappingMode topic_mapping_mode{TopicMappingMode::PREFIX_ROS_TOPIC};
+    std::string fixed_topic{"ros2.raw"};
+    bool strict_startup{false};
+    std::size_t max_queue_messages{1024};
+    bool drop_when_full{true};
+    std::optional<int> linger_ms;
+    std::optional<int> batch_size;
+  };
+
   struct SubscriptionRuntime
   {
     std::string log_label;
+    std::string ros_topic;
+    std::string msg_type;
+    std::string kafka_topic;
     std::atomic<int64_t> next_log_time_ns{0};
+    std::atomic<uint64_t> sent_ok{0};
+    std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> errors{0};
   };
 
   struct ActiveSubscription
@@ -78,10 +108,18 @@ private:
   void clear_subscriptions();
   bool configure_from_parameters(std::string * error_message);
   bool validate_qos_depth(int qos_depth, std::string * error_message) const;
+  bool validate_kafka_parameters(const KafkaParameters & pending, std::string * error_message) const;
+  bool configure_kafka_parameters(std::string * error_message);
+  bool start_producer();
+  void stop_producer();
+  std::string map_kafka_topic(const std::string & ros_topic) const;
+  kafka_client::KafkaProducerConfig build_producer_config() const;
   rclcpp::QoS build_qos_profile() const;
 
   std::vector<SubscriptionConfig> configured_subscriptions_;
   std::vector<ActiveSubscription> active_subscriptions_;
+  KafkaParameters kafka_parameters_;
+  std::shared_ptr<kafka_client::KafkaProducer> kafka_producer_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
     on_parameters_set_handle_;
