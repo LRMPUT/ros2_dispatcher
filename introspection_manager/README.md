@@ -1,5 +1,5 @@
 ## Overview
-`introspection_manager` is a ROS 2 component node that watches the ROS graph, keeps an up-to-date list of topics and their message types, and exposes that data via a service and a latched topic. It is useful for dashboards, monitoring tools, or other nodes that need to discover available data streams at runtime.
+`introspection_manager` is a ROS 2 component node that watches the ROS graph, keeps an up-to-date list of topics and their message types, and exposes that data via a service and a latched topic. It is useful for dashboards, monitoring tools, or other nodes that need to discover available data streams at runtime. See the top-level [README](../README.md) for the architecture context.
 
 Key behaviors:
 - Tracks the ROS 2 graph and rebuilds a topic → types map whenever the graph changes.
