@@ -1,0 +1,1 @@
+"""Mock Kafka server package."""

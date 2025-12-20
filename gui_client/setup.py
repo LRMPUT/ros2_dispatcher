@@ -12,7 +12,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name, ['plugin.xml']),
     ],
-    install_requires=['setuptools', 'pyyaml'],
+    install_requires=['setuptools', 'pyyaml', 'dispatcher_controller'],
     zip_safe=True,
     maintainer='mackop',
     maintainer_email='maciej.p.krupka@student.put.poznan.pl',
