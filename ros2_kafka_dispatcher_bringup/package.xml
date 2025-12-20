@@ -1,23 +1,26 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>introspection_manager_msgs</name>
+  <name>ros2_kafka_dispatcher_bringup</name>
   <version>1.0.0</version>
-  <description>INSERT_DESCRIPTION</description>
+  <description>Launch and configuration package for bringing up the ros2_kafka_dispatcher system.</description>
   <maintainer email="maciej.krupka@put.poznan.pl">Maciej Krupka</maintainer>
   <license>Apache License 2.0</license>
 
-  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>launch</depend>
   <depend>launch_ros</depend>
-  <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
-  <depend>lifecycle_msgs</depend>
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>dispatcher_controller</depend>
+  <depend>kafka_sink</depend>
+  <depend>introspection_manager</depend>
+  <depend>plugin_loader</depend>
+  <depend>processing_plugins</depend>
+  <depend>plugin_interfaces</depend>
+  <depend>gui_client</depend>
+  <exec_depend>rviz2</exec_depend>
 
-  <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

@@ -1,21 +1,20 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>introspection_manager_msgs</name>
+  <name>kafka_sink</name>
   <version>1.0.0</version>
-  <description>INSERT_DESCRIPTION</description>
+  <description>Lifecycle-based Kafka sink that dynamically subscribes to configured topics.</description>
   <maintainer email="maciej.krupka@put.poznan.pl">Maciej Krupka</maintainer>
   <license>Apache License 2.0</license>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>launch_ros</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>rclcpp_components</depend>
   <depend>lifecycle_msgs</depend>
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>yaml-cpp</depend>
+  <depend>launch_ros</depend>
 
   <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>

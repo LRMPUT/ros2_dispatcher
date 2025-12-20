@@ -1,0 +1,9 @@
+# Reload the selection based on the current mode.
+# In file mode: reloads from the file (optionally override path below).
+# In all mode: re-queries introspection_manager.
+# In gui mode: re-applies last GUI selection if present.
+string selection_file_path
+bool apply_now
+---
+bool success
+string message
