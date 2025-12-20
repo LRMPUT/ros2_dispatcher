@@ -106,6 +106,10 @@ public:
 
   HealthStatus health() const;
 
+  // Exposed for internal delivery callback
+  void on_delivery_success();
+  void on_delivery_failure(const std::string & error_message);
+
 private:
   bool set_config_if_present(
     RdKafka::Conf & conf, const std::string & key, const std::optional<int> & value,
@@ -113,8 +117,6 @@ private:
   bool ensure_ready_locked(std::string * error_message);
   void update_state(ProducerState state);
   void poll_loop();
-  void on_delivery_success();
-  void on_delivery_failure(const std::string & error_message);
 
   ProducerConfig config_;
   std::unique_ptr<RdKafka::Producer> producer_;
