@@ -9,6 +9,8 @@ import rclpy.task
 
 # Import the service types from introspection_manager package
 from introspection_manager_msgs.srv import GetTopics
+from introspection_manager_msgs.msg import TopicInfo
+from dispatcher_controller.srv import ApplySelection
 
 class CustomItemDelegate(QStyledItemDelegate):
     """Custom delegate to preserve item colors even when selected."""
@@ -87,12 +89,14 @@ class IntrospectionPlugin(Plugin):
         # --- ROS 2 service clients ---
         SERVICE_NAME = '/introspection_manager_node/get_topics'
         self.get_topics_cli = self._node.create_client(GetTopics, SERVICE_NAME)
+        self.apply_selection_cli = self._node.create_client(ApplySelection, '/apply_selection')
         
         # Connect button signals to handlers
         self.btn_update.clicked.connect(self.update_topic_list)
         self.btn_save.clicked.connect(self.handle_save_selection)
         self.btn_unselect.clicked.connect(self.handle_unselect_saved)
         self.btn_plugin.clicked.connect(self.handle_plugin_action)
+        self.btn_start.clicked.connect(self.handle_apply_selection)
         # Filter text -> update list
         self.filter_edit.textChanged.connect(self.filter_topics)
         
@@ -115,6 +119,38 @@ class IntrospectionPlugin(Plugin):
         topic_name = item_text[:item_text.rfind('[')].strip()
         topic_type = item_text[item_text.rfind('[') + 1:item_text.rfind(']')].strip()
         return (topic_name, topic_type)
+
+    def handle_apply_selection(self):
+        """Send selected topics to dispatcher_controller/apply_selection service."""
+        selected_items = self.topic_list.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self._widget, "Info", "No topics selected to apply")
+            return
+
+        topics = []
+        for item in selected_items:
+            topic_name, topic_type = self._extract_topic_info(item.text())
+            topic_msg = TopicInfo()
+            topic_msg.name = topic_name
+            # Let dispatcher_controller infer the type when it's unknown/empty
+            if topic_type and topic_type.lower() not in {'unknown', 'unknown_type'}:
+                topic_msg.type = topic_type
+            topics.append(topic_msg)
+
+        if not self.apply_selection_cli.wait_for_service(timeout_sec=2.5):
+            QMessageBox.warning(
+                self._widget,
+                "Dispatcher Controller",
+                "apply_selection service not available",
+            )
+            self._node.get_logger().warning("apply_selection service not available")
+            return
+
+        request = ApplySelection.Request()
+        request.topics = topics
+        future = self.apply_selection_cli.call_async(request)
+        future.add_done_callback(self._on_apply_selection_response)
+
     def update_topic_list(self):
         """Fetch topics from introspection manager and update the list."""
         if not self.get_topics_cli.wait_for_service(timeout_sec=2.5):
@@ -221,6 +257,35 @@ class IntrospectionPlugin(Plugin):
             error_msg = f"Unexpected error while saving topics:\n{str(e)}"
             QMessageBox.critical(self._widget, "Error", error_msg)
             self._node.get_logger().error(f"Unexpected error during save: {e}")
+
+    def _on_apply_selection_response(self, future):
+        """Handle response from dispatcher_controller apply_selection service."""
+        try:
+            response = future.result()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"apply_selection service call failed: {e}")
+            QMessageBox.critical(
+                self._widget,
+                "Dispatcher Controller",
+                f"Service call failed: {e}",
+            )
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected error calling apply_selection: {e}")
+            QMessageBox.critical(
+                self._widget,
+                "Dispatcher Controller",
+                f"Unexpected error: {e}",
+            )
+        else:
+            title = "Dispatcher Controller"
+            if response.success:
+                QMessageBox.information(self._widget, title, response.message or "Selection applied")
+            else:
+                QMessageBox.warning(
+                    self._widget,
+                    title,
+                    response.message or "Failed to apply selection",
+                )
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
@@ -242,6 +307,7 @@ class IntrospectionPlugin(Plugin):
         """Called when the plugin is being shut down."""
         # Destroy service clients
         self._node.destroy_client(self.get_topics_cli)
+        self._node.destroy_client(self.apply_selection_cli)
     
     def save_settings(self, plugin_settings, instance_settings):
         """Save plugin settings (optional)."""

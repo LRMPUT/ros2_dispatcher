@@ -7,6 +7,7 @@
   <maintainer email="maciej.p.krupka@student.put.poznan.pl">mackop</maintainer>
   <license>TODO: License declaration</license>
 
+  <depend>dispatcher_controller</depend>
   <depend>rclpy</depend>
   <depend>rqt_gui</depend>
   <exec_depend>rqt_gui_py</exec_depend>  
