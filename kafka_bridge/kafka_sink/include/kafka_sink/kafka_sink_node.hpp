@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "kafka_client/kafka_producer.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -55,6 +56,11 @@ private:
   {
     std::string log_label;
     std::atomic<int64_t> next_log_time_ns{0};
+    std::string kafka_topic;
+    std::atomic<uint64_t> sent{0};
+    std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> failures{0};
+    std::atomic<int64_t> next_error_log_time_ns{0};
   };
 
   struct ActiveSubscription
@@ -79,6 +85,9 @@ private:
   bool configure_from_parameters(std::string * error_message);
   bool validate_qos_depth(int qos_depth, std::string * error_message) const;
   rclcpp::QoS build_qos_profile() const;
+  std::string resolve_kafka_topic(const std::string & ros_topic) const;
+  kafka_client::BufferView make_buffer_view(const rclcpp::SerializedMessage & message) const;
+  void log_send_result(SubscriptionRuntime & runtime_state, const kafka_client::SendResult & result);
 
   std::vector<SubscriptionConfig> configured_subscriptions_;
   std::vector<ActiveSubscription> active_subscriptions_;
@@ -88,6 +97,9 @@ private:
 
   std::atomic_bool is_active_{false};
   int qos_depth_{10};
+  std::string kafka_topic_prefix_;
+  kafka_client::ProducerConfig kafka_config_;
+  std::unique_ptr<kafka_client::KafkaProducer> kafka_producer_;
 };
 }  // namespace kafka_sink
 

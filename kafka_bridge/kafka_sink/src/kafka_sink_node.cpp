@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -30,6 +31,7 @@ namespace kafka_sink
 namespace
 {
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;  // 1 second
+constexpr int64_t kErrorThrottleIntervalNs = 5'000'000'000LL;  // 5 seconds
 }  // namespace
 
 KafkaSinkNode::ActiveSubscription::ActiveSubscription(ActiveSubscription && other) noexcept
@@ -121,6 +123,19 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
 {
   this->declare_parameter<std::string>("subscriptions_yaml", "");
   this->declare_parameter<int>("qos_depth", qos_depth_);
+  this->declare_parameter<std::string>("kafka.bootstrap_servers", "");
+  this->declare_parameter<std::string>("kafka.client_id", this->get_name());
+  this->declare_parameter<std::string>("kafka.acks", "all");
+  this->declare_parameter<int>("kafka.linger_ms", -1);
+  this->declare_parameter<int>("kafka.batch_size", -1);
+  this->declare_parameter<int>("kafka.queue_buffering_max_kbytes", -1);
+  this->declare_parameter<int>("kafka.max_in_flight", -1);
+  this->declare_parameter<int>("kafka.retries", -1);
+  this->declare_parameter<int>("kafka.retry_backoff_ms", -1);
+  this->declare_parameter<bool>("kafka.enable_idempotence", true);
+  this->declare_parameter<int>("kafka.max_pending_messages", 0);
+  this->declare_parameter<std::string>("kafka.start_mode", "strict");
+  this->declare_parameter<std::string>("kafka.topic_prefix", "");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&KafkaSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -132,6 +147,20 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_configure(const rclcpp_lifecycle
   if (!configure_from_parameters(&error_message)) {
     RCLCPP_ERROR(get_logger(), "Failed to configure kafka_sink: %s", error_message.c_str());
     return CallbackReturn::FAILURE;
+  }
+
+  kafka_producer_ = std::make_unique<kafka_client::KafkaProducer>(kafka_config_);
+  std::string producer_error;
+  if (!kafka_producer_->start(&producer_error)) {
+    RCLCPP_ERROR(get_logger(), "Failed to start Kafka producer: %s", producer_error.c_str());
+    kafka_producer_.reset();
+    return CallbackReturn::FAILURE;
+  }
+
+  const auto health = kafka_producer_->health();
+  if (health.state == kafka_client::ProducerState::DEGRADED) {
+    RCLCPP_WARN(
+      get_logger(), "Kafka producer started in degraded mode: %s", health.last_error.c_str());
   }
 
   if (configured_subscriptions_.empty()) {
@@ -174,6 +203,10 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_cleanup(const rclcpp_lifecycle::
   is_active_.store(false, std::memory_order_release);
   clear_subscriptions();
   configured_subscriptions_.clear();
+  if (kafka_producer_) {
+    kafka_producer_->stop();
+    kafka_producer_.reset();
+  }
 
   RCLCPP_INFO(get_logger(), "Cleaned up kafka_sink configuration and runtime state");
   return CallbackReturn::SUCCESS;
@@ -184,6 +217,10 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_shutdown(const rclcpp_lifecycle:
   is_active_.store(false, std::memory_order_release);
   clear_subscriptions();
   configured_subscriptions_.clear();
+  if (kafka_producer_) {
+    kafka_producer_->stop();
+    kafka_producer_.reset();
+  }
 
   RCLCPP_INFO(get_logger(), "Shutting down kafka_sink");
   return CallbackReturn::SUCCESS;
@@ -212,6 +249,13 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       update_required = true;
     } else if (param.get_name() == "qos_depth") {
       pending_depth = param.as_int();
+    } else if (param.get_name().rfind("kafka.", 0) == 0) {
+      const auto & current_state = this->get_current_state();
+      if (current_state.id() != lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED) {
+        result.successful = false;
+        result.reason = "Kafka parameters require the node to be unconfigured";
+        return result;
+      }
     }
   }
 
@@ -257,6 +301,48 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
     return false;
   }
 
+  kafka_topic_prefix_ = this->get_parameter("kafka.topic_prefix").as_string();
+  kafka_config_.bootstrap_servers = this->get_parameter("kafka.bootstrap_servers").as_string();
+  kafka_config_.client_id = this->get_parameter("kafka.client_id").as_string();
+  kafka_config_.acks = this->get_parameter("kafka.acks").as_string();
+  kafka_config_.enable_idempotence = this->get_parameter("kafka.enable_idempotence").as_bool();
+  const auto start_mode = this->get_parameter("kafka.start_mode").as_string();
+  if (start_mode == "strict") {
+    kafka_config_.start_mode = kafka_client::StartMode::STRICT;
+  } else if (start_mode == "tolerant") {
+    kafka_config_.start_mode = kafka_client::StartMode::TOLERANT;
+  } else {
+    *error_message = "kafka.start_mode must be either 'strict' or 'tolerant'";
+    return false;
+  }
+
+  const auto optional_or_reset = [](int value) -> std::optional<int> {
+      return value >= 0 ? std::optional<int>(value) : std::nullopt;
+    };
+
+  kafka_config_.linger_ms = optional_or_reset(this->get_parameter("kafka.linger_ms").as_int());
+  kafka_config_.batch_size = optional_or_reset(this->get_parameter("kafka.batch_size").as_int());
+  kafka_config_.queue_buffering_max_kbytes = optional_or_reset(
+    this->get_parameter("kafka.queue_buffering_max_kbytes").as_int());
+  kafka_config_.max_in_flight = optional_or_reset(
+    this->get_parameter("kafka.max_in_flight").as_int());
+  kafka_config_.retries = optional_or_reset(this->get_parameter("kafka.retries").as_int());
+  kafka_config_.retry_backoff_ms = optional_or_reset(
+    this->get_parameter("kafka.retry_backoff_ms").as_int());
+  const auto max_pending_messages =
+    this->get_parameter("kafka.max_pending_messages").as_int();
+  kafka_config_.max_pending_messages =
+    max_pending_messages > 0 ? static_cast<std::size_t>(max_pending_messages) : 0U;
+
+  if (kafka_config_.client_id.empty()) {
+    kafka_config_.client_id = this->get_name();
+  }
+
+  if (kafka_config_.bootstrap_servers.empty()) {
+    *error_message = "kafka.bootstrap_servers cannot be empty";
+    return false;
+  }
+
   return true;
 }
 
@@ -282,6 +368,11 @@ bool KafkaSinkNode::build_subscriptions()
 
   auto qos = build_qos_profile();
 
+  if (!kafka_producer_) {
+    RCLCPP_ERROR(get_logger(), "Kafka producer not initialised");
+    return false;
+  }
+
   active_subscriptions_.reserve(configured_subscriptions_.size());
   for (const auto & config : configured_subscriptions_) {
     active_subscriptions_.emplace_back();
@@ -291,10 +382,15 @@ bool KafkaSinkNode::build_subscriptions()
     runtime.runtime_state = std::make_shared<SubscriptionRuntime>();
     runtime.runtime_state->log_label =
       "topic='" + config.topic_name + "' type='" + config.msg_type + "'";
+    runtime.runtime_state->kafka_topic = resolve_kafka_topic(config.topic_name);
 
     auto runtime_state = runtime.runtime_state;
+    const auto kafka_topic = runtime.runtime_state->kafka_topic;
+    const auto ros_topic = runtime.topic_name;
+    const auto ros_type = runtime.msg_type;
     auto callback =
-      [this, runtime_state](std::shared_ptr<rclcpp::SerializedMessage> msg) {
+      [this, runtime_state, kafka_topic, ros_topic, ros_type](
+        std::shared_ptr<rclcpp::SerializedMessage> msg) {
         if (!is_active_.load(std::memory_order_acquire)) {
           return;
         }
@@ -309,6 +405,32 @@ bool KafkaSinkNode::build_subscriptions()
           RCLCPP_INFO(
             this->get_logger(), "[kafka_sink] %s size=%zu bytes",
             runtime_state->log_label.c_str(), msg->size());
+        }
+
+        const int64_t timestamp_ms = now_ns / 1'000'000;
+        auto payload = make_buffer_view(*msg);
+        std::vector<kafka_client::Header> headers;
+        headers.reserve(4);
+        headers.push_back({"ros_topic", ros_topic});
+        headers.push_back({"ros_type", ros_type});
+        headers.push_back({"ros_encoding", "cdr"});
+        headers.push_back({"ros_timestamp_ns", std::to_string(now_ns)});
+
+        auto result = kafka_producer_->send(
+          kafka_topic,
+          kafka_client::BufferView{},
+          payload,
+          timestamp_ms,
+          headers);
+
+        if (result.accepted) {
+          runtime_state->sent.fetch_add(1, std::memory_order_relaxed);
+        } else if (result.dropped_queue_full) {
+          runtime_state->dropped.fetch_add(1, std::memory_order_relaxed);
+          log_send_result(*runtime_state, result);
+        } else {
+          runtime_state->failures.fetch_add(1, std::memory_order_relaxed);
+          log_send_result(*runtime_state, result);
         }
       };
 
@@ -329,6 +451,55 @@ bool KafkaSinkNode::build_subscriptions()
 void KafkaSinkNode::clear_subscriptions()
 {
   active_subscriptions_.clear();
+}
+
+std::string KafkaSinkNode::resolve_kafka_topic(const std::string & ros_topic) const
+{
+  std::string sanitized = ros_topic;
+  while (!sanitized.empty() && sanitized.front() == '/') {
+    sanitized.erase(sanitized.begin());
+  }
+
+  if (sanitized.empty()) {
+    sanitized = ros_topic;
+  }
+
+  if (!kafka_topic_prefix_.empty()) {
+    sanitized = kafka_topic_prefix_ + sanitized;
+  }
+  return sanitized;
+}
+
+kafka_client::BufferView KafkaSinkNode::make_buffer_view(
+  const rclcpp::SerializedMessage & message) const
+{
+  const auto & rcl_message = message.get_rcl_serialized_message();
+  return kafka_client::BufferView{rcl_message.buffer, message.size()};
+}
+
+void KafkaSinkNode::log_send_result(
+  SubscriptionRuntime & runtime_state, const kafka_client::SendResult & result)
+{
+  const auto now_ns = this->get_clock()->now().nanoseconds();
+  auto next_log_ns = runtime_state.next_error_log_time_ns.load(std::memory_order_acquire);
+  if (now_ns < next_log_ns) {
+    return;
+  }
+  if (!runtime_state.next_error_log_time_ns.compare_exchange_strong(
+      next_log_ns, now_ns + kErrorThrottleIntervalNs, std::memory_order_acq_rel))
+  {
+    return;
+  }
+
+  if (result.dropped_queue_full) {
+    RCLCPP_WARN(
+      get_logger(), "[kafka_sink] %s Kafka queue full; dropping payload (%s)",
+      runtime_state.log_label.c_str(), result.error_message.c_str());
+  } else {
+    RCLCPP_ERROR(
+      get_logger(), "[kafka_sink] %s failed to enqueue payload: %s",
+      runtime_state.log_label.c_str(), result.error_message.c_str());
+  }
 }
 
 }  // namespace kafka_sink

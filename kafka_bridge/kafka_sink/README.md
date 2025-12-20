@@ -1,8 +1,8 @@
 # kafka_sink
 
-Lifecycle-based Kafka sink node that dynamically subscribes to topics and logs serialized message
-sizes. The current implementation is transport-agnostic and ready to be extended with Kafka
-delivery.
+Lifecycle-based Kafka sink node that dynamically subscribes to topics and pushes serialized payloads
+(CDR) into Kafka along with ROS metadata headers. The sink remains transport-agnostic and forwards
+raw bytes without schema translation.
 
 ## Build
 
@@ -48,6 +48,16 @@ ros2 lifecycle set /kafka_sink deactivate
     msg_type: std_msgs/msg/Int32
   ```
 - `qos_depth` (int, default 10): Depth for the QoS profile (KeepLast).
+- Kafka configuration (immutable after configure):
+  - `kafka.bootstrap_servers` (string, required)
+  - `kafka.client_id` (string, default `kafka_sink`)
+  - `kafka.acks` (string, default `all`)
+  - `kafka.start_mode` (`strict`|`tolerant`, default `strict`)
+  - `kafka.enable_idempotence` (bool, default `true`)
+  - `kafka.linger_ms`, `kafka.batch_size`, `kafka.queue_buffering_max_kbytes`,
+    `kafka.max_in_flight`, `kafka.retries`, `kafka.retry_backoff_ms` (ints, negative to skip)
+  - `kafka.max_pending_messages` (int, limit for librdkafka internal queue; 0 keeps default)
+  - `kafka.topic_prefix` (string, optional prefix applied to resolved Kafka topics)
 
 You can update `subscriptions_yaml` while the node is inactive. When the node is active the update
 is rejected with the message `deactivate first`.
@@ -63,3 +73,6 @@ ros2 param set /kafka_sink subscriptions_yaml "[{'topic_name': '/foo', 'msg_type
 - Subscriptions are created on activation and destroyed on deactivation/cleanup/shutdown.
 - Each received serialized message is logged at most once per second per topic with topic name and
   byte size.
+- Kafka send attempts are non-blocking; queue backpressure is handled by dropping with counters and
+  throttled warnings. Metadata headers include ROS topic, type, encoding (`cdr`), and a timestamp in
+  nanoseconds.
