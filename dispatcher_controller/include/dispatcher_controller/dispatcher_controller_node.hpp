@@ -116,6 +116,8 @@ private:
   rclcpp::Client<introspection_manager_msgs::srv::GetTopics>::SharedPtr introspection_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr introspection_param_client_;
 
+  rclcpp::CallbackGroup::SharedPtr client_cb_group_;
+
   OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
   // Parameters

@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "yaml-cpp/yaml.h"
+#include <rclcpp/logging.hpp>
 
 namespace dispatcher_controller
 {
@@ -15,6 +16,8 @@ using namespace std::chrono_literals;
 DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dispatcher_controller", options)
 {
+  client_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
   kafka_sink_node_name_ = declare_parameter<std::string>("kafka_sink_node_name", "/kafka_sink");
   introspection_service_name_ = declare_parameter<std::string>(
     "introspection_service_name", "/introspection_manager/get_topics");
@@ -40,15 +43,16 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   }
 
   change_state_client_ = create_client<lifecycle_msgs::srv::ChangeState>(
-    kafka_sink_node_name_ + "/change_state");
+    kafka_sink_node_name_ + "/change_state", rmw_qos_profile_services_default, client_cb_group_);
   get_state_client_ =
-    create_client<lifecycle_msgs::srv::GetState>(kafka_sink_node_name_ + "/get_state");
+    create_client<lifecycle_msgs::srv::GetState>(
+    kafka_sink_node_name_ + "/get_state", rmw_qos_profile_services_default, client_cb_group_);
   set_parameters_client_ = create_client<rcl_interfaces::srv::SetParameters>(
-    kafka_sink_node_name_ + "/set_parameters");
+    kafka_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
   introspection_client_ = create_client<introspection_manager_msgs::srv::GetTopics>(
-    introspection_service_name_);
+    introspection_service_name_, rmw_qos_profile_services_default, client_cb_group_);
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
-    introspection_node_name_ + "/set_parameters");
+    introspection_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
 
   apply_srv_ = create_service<dispatcher_controller::srv::ApplySelection>(
     "apply_selection",
@@ -158,6 +162,14 @@ void DispatcherControllerNode::handle_apply_selection(
   const dispatcher_controller::srv::ApplySelection::Request::SharedPtr request,
   dispatcher_controller::srv::ApplySelection::Response::SharedPtr response)
 {
+  // echo request
+  RCLCPP_DEBUG(
+    get_logger(), "ApplySelection request with %zu topics", request->topics.size());
+  for (const auto & topic : request->topics) {
+    RCLCPP_DEBUG(
+      get_logger(), "  - %s (%s)", topic.name.c_str(),
+      topic.type.empty() ? "unknown_type" : topic.type.c_str());
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   if (phase_ == ControllerPhase::BUSY) {
     response->success = false;
@@ -668,16 +680,60 @@ bool DispatcherControllerNode::infer_missing_types(
     topic_types[info.name] = info.type;
   }
 
+  // Collect all missing topics and check which ones cannot be resolved
+  std::vector<std::string> missing_topics;
+  std::vector<std::string> available_topics;
+  
+  for (const auto & entry : topic_types) {
+    available_topics.push_back(entry.first);
+  }
+
   for (auto & sub : subs) {
     if (sub.type.empty()) {
       auto it = topic_types.find(sub.name);
       if (it == topic_types.end() || it->second.empty()) {
-        error_out = "Missing type for topic " + sub.name;
-        return false;
+        missing_topics.push_back(sub.name);
+        RCLCPP_WARN(
+          get_logger(), "Cannot infer type for topic: %s (not found in introspection)",
+          sub.name.c_str());
+      } else {
+        sub.type = it->second;
+        RCLCPP_DEBUG(
+          get_logger(), "Inferred type for topic %s: %s", sub.name.c_str(),
+          sub.type.c_str());
       }
-      sub.type = it->second;
     }
   }
+
+  if (!missing_topics.empty()) {
+    std::ostringstream oss;
+    oss << "Cannot infer types for " << missing_topics.size() << " topic(s): ";
+    for (size_t i = 0; i < missing_topics.size(); ++i) {
+      if (i > 0) oss << ", ";
+      oss << missing_topics[i];
+    }
+    oss << ". Available topics from introspection: " << available_topics.size();
+    error_out = oss.str();
+    
+    RCLCPP_ERROR(get_logger(), "%s", error_out.c_str());
+    if (!available_topics.empty() && available_topics.size() <= 20) {
+      std::ostringstream avail;
+      avail << "  Available topics: ";
+      for (size_t i = 0; i < available_topics.size(); ++i) {
+        if (i > 0) avail << ", ";
+        avail << available_topics[i];
+      }
+      RCLCPP_ERROR(get_logger(), "%s", avail.str().c_str());
+    } else if (available_topics.size() > 20) {
+      RCLCPP_ERROR(
+        get_logger(), "  Available topics (first 20 of %zu): ", available_topics.size());
+      for (size_t i = 0; i < 20; ++i) {
+        RCLCPP_ERROR(get_logger(), "    - %s", available_topics[i].c_str());
+      }
+    }
+    return false;
+  }
+
   return true;
 }
 
