@@ -15,6 +15,8 @@ using namespace std::chrono_literals;
 DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dispatcher_controller", options)
 {
+  client_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
   kafka_sink_node_name_ = declare_parameter<std::string>("kafka_sink_node_name", "/kafka_sink");
   introspection_service_name_ = declare_parameter<std::string>(
     "introspection_service_name", "/introspection_manager/get_topics");
@@ -40,15 +42,16 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   }
 
   change_state_client_ = create_client<lifecycle_msgs::srv::ChangeState>(
-    kafka_sink_node_name_ + "/change_state");
+    kafka_sink_node_name_ + "/change_state", rmw_qos_profile_services_default, client_cb_group_);
   get_state_client_ =
-    create_client<lifecycle_msgs::srv::GetState>(kafka_sink_node_name_ + "/get_state");
+    create_client<lifecycle_msgs::srv::GetState>(
+    kafka_sink_node_name_ + "/get_state", rmw_qos_profile_services_default, client_cb_group_);
   set_parameters_client_ = create_client<rcl_interfaces::srv::SetParameters>(
-    kafka_sink_node_name_ + "/set_parameters");
+    kafka_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
   introspection_client_ = create_client<introspection_manager_msgs::srv::GetTopics>(
-    introspection_service_name_);
+    introspection_service_name_, rmw_qos_profile_services_default, client_cb_group_);
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
-    introspection_node_name_ + "/set_parameters");
+    introspection_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
 
   apply_srv_ = create_service<dispatcher_controller::srv::ApplySelection>(
     "apply_selection",
@@ -490,12 +493,9 @@ std::optional<uint8_t> DispatcherControllerNode::get_kafka_sink_state()
 
   auto request = std::make_shared<lifecycle_msgs::srv::GetState::Request>();
   auto future = get_state_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    RCLCPP_WARN(
-      get_logger(), "Failed waiting for kafka_sink state: %s",
-      status == rclcpp::FutureReturnCode::TIMEOUT ? "timeout" : "interrupted");
+  auto status = future.wait_for(service_timeout_);
+  if (status != std::future_status::ready) {
+    RCLCPP_WARN(get_logger(), "Timeout waiting for kafka_sink state");
     return std::nullopt;
   }
   return future.get()->current_state.id;
@@ -512,11 +512,8 @@ bool DispatcherControllerNode::change_kafka_sink_state(
   auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
   request->transition.id = transition_id;
   auto future = change_state_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    error_out = (status == rclcpp::FutureReturnCode::TIMEOUT ? "Timeout" : "Interrupted") +
-      std::string(" during kafka_sink ") + action;
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout during kafka_sink " + action;
     return false;
   }
   auto response = future.get();
@@ -539,11 +536,8 @@ bool DispatcherControllerNode::set_kafka_sink_subscriptions_yaml(
   rclcpp::Parameter param("subscriptions_yaml", topics_to_yaml(subs));
   request->parameters.push_back(param.to_parameter_msg());
   auto future = set_parameters_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    error_out = status == rclcpp::FutureReturnCode::TIMEOUT ?
-      "Timeout setting subscriptions_yaml" : "Interrupted while setting subscriptions_yaml";
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout setting subscriptions_yaml";
     return false;
   }
   auto response = future.get();
@@ -614,11 +608,8 @@ bool DispatcherControllerNode::discover_all_topics(
 
   auto request = std::make_shared<introspection_manager_msgs::srv::GetTopics::Request>();
   auto future = introspection_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    error_out = status == rclcpp::FutureReturnCode::TIMEOUT ?
-      "Timeout querying introspection_manager" : "Interrupted while querying introspection_manager";
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout querying introspection_manager";
     return false;
   }
   out.clear();
@@ -671,12 +662,8 @@ bool DispatcherControllerNode::infer_missing_types(
 
   auto request = std::make_shared<introspection_manager_msgs::srv::GetTopics::Request>();
   auto future = introspection_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    error_out = status == rclcpp::FutureReturnCode::TIMEOUT ?
-      "Timeout querying introspection_manager for types" :
-      "Interrupted while querying introspection_manager for types";
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout querying introspection_manager for types";
     return false;
   }
   std::map<std::string, std::string> topic_types;
@@ -720,11 +707,8 @@ bool DispatcherControllerNode::set_introspection_enabled(bool enabled, std::stri
   rclcpp::Parameter param("introspection_enabled", enabled);
   request->parameters.push_back(param.to_parameter_msg());
   auto future = introspection_param_client_->async_send_request(request);
-  auto status = rclcpp::spin_until_future_complete(
-    get_node_base_interface(), future, service_timeout_);
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    error_out = status == rclcpp::FutureReturnCode::TIMEOUT ?
-      "Timeout toggling introspection_enabled" : "Interrupted while toggling introspection_enabled";
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout toggling introspection_enabled";
     return false;
   }
   auto response = future.get();
