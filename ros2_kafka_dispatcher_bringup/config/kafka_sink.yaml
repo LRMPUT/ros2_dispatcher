@@ -1,4 +1,22 @@
 /**:
   ros__parameters:
     qos_depth: 10
-    subscriptions_yaml: ""
+    kafka:
+      bootstrap_servers: "localhost:9092"
+      client_id: "kafka_sink"
+      acks: "all"
+      start_mode: "strict"
+      enable_idempotence: true
+      linger_ms: -1
+      batch_size: -1
+      queue_buffering_max_kbytes: -1
+      max_in_flight: -1
+      retries: -1
+      retry_backoff_ms: -1
+      max_pending_messages: 0
+      topic_prefix: ""
+    subscriptions_yaml: |
+      - topic_name: /demo/chatter
+        msg_type: std_msgs/msg/String
+      - topic_name: /demo/number
+        msg_type: std_msgs/msg/Int32

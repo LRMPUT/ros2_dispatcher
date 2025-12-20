@@ -2,7 +2,7 @@
 
 #include <chrono>
 #include <memory>
-#include <rdkafkacpp.h>
+#include <librdkafka/rdkafkacpp.h>
 #include <stdexcept>
 #include <utility>
 

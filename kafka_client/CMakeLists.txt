@@ -7,7 +7,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGETS rdkafka++)
+# Try to find C++ wrapper first, then fallback to C core
+pkg_check_modules(RDKAFKA QUIET rdkafka++)
+if(NOT RDKAFKA_FOUND)
+  pkg_check_modules(RDKAFKA REQUIRED rdkafka)
+endif()
 
 option(KAFKA_CLIENT_BUILD_EXAMPLES "Build kafka_client example executables" OFF)
 
@@ -25,7 +29,7 @@ target_include_directories(kafka_client
 
 target_link_libraries(kafka_client
   PUBLIC
-    PkgConfig::RDKAFKA
+    ${RDKAFKA_LIBRARIES}
 )
 
 target_compile_definitions(kafka_client
