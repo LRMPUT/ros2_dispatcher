@@ -1,6 +1,6 @@
 # dispatcher_controller
 
-Control-plane node that orchestrates ROS 2 to Kafka streaming pipelines by managing the lifecycle of the `kafka_sink` component and coordinating pipeline selections from multiple sources (GUI/file/introspection).
+Control-plane node that orchestrates ROS 2 to Kafka streaming pipelines by managing the lifecycle of the `kafka_sink` component and coordinating pipeline selections from multiple sources (GUI/file/introspection). For the system-wide architecture, see the root [README](../README.md); for a beginner-friendly walkthrough, see [`docs/getting_started.md`](../docs/getting_started.md).
 
 ## Build
 

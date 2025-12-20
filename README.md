@@ -1,41 +1,70 @@
 # ros2_kafka_dispatcher
 
-`ros2_kafka_dispatcher` is a modular ROS 2 framework for collecting, processing and streaming robot data to Apache Kafka. The framework is designed for both research and production use, allowing dynamic discovery of ROS 2 topics, flexible plugin‑based processing pipelines and reliable publishing of data to Kafka.
+## Project Overview
+- ROS 2 packages for discovering active topics, selecting subsets, and forwarding serialized messages to Apache Kafka.
+- Includes lifecycle-managed Kafka sink, dispatcher/controller logic, introspection tooling, and bringup launch files.
 
-## High-level architecture
+## Architecture / Key Components
+- **introspection_manager** (`introspection_manager/`): Monitors the ROS 2 graph and exposes topic/type listings via the `~/topics_info` publisher and `~/get_topics` service. Configurable defaults in `introspection_manager/config/introspection_manager.param.yaml`. Launch file: `introspection_manager/launch/introspection_manager.launch.py`.
+- **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka sink lifecycle. Supports selection modes `gui` | `file` | `all`, validates topics (optional), and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
+- **kafka_sink** (`kafka_bridge/kafka_sink/`): Lifecycle node that subscribes to configured topics and forwards payloads to Kafka using `kafka_client`. Parameters (e.g., `subscriptions_yaml`, `kafka.bootstrap_servers`, QoS depth) are defined in `kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`. Launch file: `kafka_bridge/kafka_sink/launch/kafka_sink_container.launch.py`.
+- **ros2_kafka_dispatcher_bringup** (`ros2_kafka_dispatcher_bringup/`): Launches the dispatcher controller, Kafka sink, and introspection manager together. Minimal setup in `ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`; composed setup in `ros2_kafka_dispatcher_bringup/launch/system_composed.launch.py`.
+- **processing_plugins/** (`processing_plugins/`): Contains placeholder plugin packages (`gps_velocity_estimator`, `moving_average_filter`) without documented behavior in this repository.
+- **plugin_loader/** and **plugin_interfaces/**: Package stubs with manifests; runtime behavior is not defined in this repository.
 
-The system consists of several cooperating ROS 2 nodes and libraries:
+## Build & Dependencies
+- Build with `colcon` in a ROS 2 workspace after resolving dependencies via `rosdep`:
+  ```bash
+  rosdep install --from-paths src --ignore-src -y
+  colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=On
+  ```
+- Key package dependencies (from `package.xml` files):
+  - `dispatcher_controller`: `rclcpp`, `rclcpp_lifecycle`, `rclcpp_components`, `lifecycle_msgs`, `rcl_interfaces`, `introspection_manager_msgs`, `yaml-cpp`.
+  - `kafka_sink`: `rclcpp`, `rclcpp_lifecycle`, `rclcpp_components`, `lifecycle_msgs`, `yaml-cpp`, `launch_ros`, `kafka_client`.
+  - `introspection_manager`: `rclcpp`, `rclcpp_components`, `introspection_manager_msgs`, `rcpputils`, `launch_ros`.
 
-- Introspection & Manager Node - monitors the ROS 2 graph, discovers avaible topic names and message types at runtime, and reports dynamic changes.
-- Plugin Loader - dynamically loads precessing plugins using the ROS 2 `pluginlib` library to manges their lifecycle.
-- Processing Plugins - small libraries implementing specific data-processing algorithms ( for example a moving-average filter ). Each plugin subscribes to one or more topics, performs computations and publishes results to Kafka or new topics.
-- Gui client - a graphical interface (RQT or standalone) that allows users to browse available topics, configure plugins and monitor their status
-- Kafka Bridge - publishes raw or processed ROS 2 massages to Apache Kafka, with buffering and error handling.
+## Usage
+- Bring up introspection manager, dispatcher controller, and Kafka sink:
+  ```bash
+  ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+    selection_mode:=file \
+    selection_file_path:="" \
+    kafka_sink_node_name:=/kafka_sink \
+    validate_topics:=false \
+    subscriptions_yaml:="" \
+    qos_depth:=10 \
+    controller_log_level:=debug \
+    kafka_sink_log_level:=info \
+    introspection_manager_param_file:="" \
+    introspection_manager_log_level:=DEBUG
+  ```
+- Run only the Kafka sink as a component container (uses `kafka_sink.config.kafka_sink.param.yaml` by default):
+  ```bash
+  ros2 launch kafka_sink kafka_sink_container.launch.py
+  ```
+- Run only the introspection manager with optional parameter override:
+  ```bash
+  ros2 launch introspection_manager introspection_manager.launch.py \
+    introspection_manager_param_file:=/path/to/introspection_manager.param.yaml
+  ```
+- Dispatcher controller can be launched standalone:
+  ```bash
+  ros2 launch dispatcher_controller dispatcher_controller.launch.py
+  ```
 
-## Repository structure
+## Configuration
+- **Dispatcher controller parameters** (declare defaults in `dispatcher_controller/src/dispatcher_controller_node.cpp`):
+  - `selection_mode` (`gui`|`file`|`all`), `selection_file_path`, `auto_apply_on_mode_change`, `validate_topics`, `kafka_sink_node_name`, `introspection_service_name`, `introspection_node_name`, `disable_introspection_after_apply`, `all_mode_max_topics`, `all_mode_allowlist`, `all_mode_denylist`, `all_mode_hide_rosout`.
+  - Services exposed: `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, `set_selection_mode`.
+- **Kafka sink parameters** (`kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`):
+  - Subscription/QoS: `qos_depth`, `subscriptions_yaml`.
+  - Kafka client: `kafka.bootstrap_servers`, `kafka.client_id`, `kafka.acks`, `kafka.topic_prefix`, `kafka.topic_mapping_mode`, `kafka.fixed_topic`, `kafka.strict_startup`, `kafka.max_queue_messages`, `kafka.drop_when_full`, `kafka.linger_ms`, `kafka.batch_size`.
+- **Introspection manager parameters** (`introspection_manager/config/introspection_manager.param.yaml`):
+  - `publisher_queue_depth`, `publisher_reliability`, `publisher_durability`, `publish_on_change`, `filter_hidden`, `introspection_enabled`.
+- **Bringup launch arguments** (`ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`):
+  - `selection_mode`, `selection_file_path`, `kafka_sink_node_name`, `validate_topics`, `subscriptions_yaml`, `qos_depth`, `controller_log_level`, `kafka_sink_log_level`, `introspection_manager_param_file`, `introspection_manager_log_level`.
 
-```
-ros_ws/src/
-  introspection_manager/   # rclcpp node exposing topic names & types
-  plugin_loader/           # plugin loader library and management node
-  plugin_interfaces/       # base interfaces for processing plugins
-  processing_plugins/
-    moving_average_filter/
-    gps_velocity_estimator/
-    ...
-  gui_client/              # RQt/Qt GUI for topic and plugin management
-  kafka_bridge/            # Kafka publisher node
-
-```
-Grouping plugins under processing_plugins keeps infrastructure packages separate from functional plugins. If a plugin needs independent versioning or unique dependencies, it can be placed in its own repository.
-
-## Architecture diagram
-
-Below is a high‑level architecture illustrating the data flow between components:
-![Architecture diagram](docs/graph.png)
-
-The Introspection & Manager node discovers ROS 2 topics and communicates with the GUI and plugin loader. The GUI sends configuration commands to the plugin loader. Selected topics are subscribed by the plugin loader, which instantiates plugin instances. Each plugin processes the data and publishes new topics or sends messages to the Kafka publisher.
-
-## License
-
-Apache 2.0
+## Limitations / Known Gaps
+- No GUI client is included in this repository; selection mode `gui` requires an external client.
+- `plugin_loader`, `plugin_interfaces`, and `processing_plugins/*` contain minimal or placeholder content without runnable examples.
+- Kafka broker provisioning is not part of this codebase; `kafka.bootstrap_servers` must point to an existing cluster.
