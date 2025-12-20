@@ -1,10 +1,10 @@
 from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox,
-    QStyledItemDelegate, QComboBox, QFileDialog, QCheckBox
+    QStyledItemDelegate, QComboBox, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem
 )
 from PyQt5.QtGui import QColor, QPainter, QBrush
-from PyQt5.QtCore import QTimer, QRect, Qt
+from PyQt5.QtCore import QTimer, QRect, Qt, QMetaObject, Q_ARG
 import yaml
 from pathlib import Path
 from datetime import datetime
@@ -46,7 +46,7 @@ class IntrospectionPlugin(Plugin):
     
     def __init__(self, context):
         super().__init__(context)
-        self.version_info = '0.0.1'
+        self.version_info = '0.0.8'
         self.setObjectName('IntrospectionPlugin')
         self._node = context.node  # Use the shared rclpy node provided by RQt
 
@@ -123,6 +123,40 @@ class IntrospectionPlugin(Plugin):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
+        # Colored status message area (single place to show result of operations)
+        self.status_result_label = QLabel('')
+        self.status_result_label.setWordWrap(True)
+        self.status_result_label.setStyleSheet(
+            'QLabel { color: #555; background-color: #f5f5f5; padding: 6px; border-radius: 4px; }'
+        )
+        layout.addWidget(self.status_result_label)
+
+        # Last vs Current status comparison table
+        self.status_table = QTableWidget(0, 3)
+        self.status_table.setHorizontalHeaderLabels(["Field", "Last", "Current"])
+        self.status_table.setEditTriggers(self.status_table.NoEditTriggers)
+        self.status_table.setSelectionMode(self.status_table.NoSelection)
+        self.status_table.verticalHeader().setVisible(False)
+        self.status_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.status_table)
+
+        # Initialize table rows for known fields
+        self._status_fields_order = [
+            ("Selection mode", "selection_mode"),
+            ("Kafka sink state", "kafka_sink_state"),
+            ("Streaming active", "streaming_active"),
+            ("Reconciling", "reconciling"),
+            ("Applied topics", "applied_topics_count"),
+        ]
+        self.status_table.setRowCount(len(self._status_fields_order))
+        for row, (label, _) in enumerate(self._status_fields_order):
+            self.status_table.setItem(row, 0, QTableWidgetItem(label))
+            self.status_table.setItem(row, 1, QTableWidgetItem("-"))
+            self.status_table.setItem(row, 2, QTableWidgetItem("-"))
+
+        # Keep last snapshot for comparison
+        self._last_status_snapshot = None
+
         # Finalize layout
         self._widget.setLayout(layout)
         context.add_widget(self._widget)  # Add the widget to the RQt UI dock
@@ -160,6 +194,9 @@ class IntrospectionPlugin(Plugin):
         self.status_timer.timeout.connect(self.refresh_status)
         self.status_timer.start(5000)
         self._on_mode_changed(self.mode_combo.currentText())
+        
+        # Initial status refresh (delayed to allow service discovery)
+        QTimer.singleShot(2000, self.refresh_status)
     
     def _extract_topic_name(self, item_text):
         """Extract topic name from item text format 'name [type]'."""
@@ -272,8 +309,8 @@ class IntrospectionPlugin(Plugin):
 
     def refresh_status(self):
         """Fetch current dispatcher_controller status."""
-        if not self.get_status_cli.wait_for_service(timeout_sec=2.5):
-            self.status_label.setText("Status: get_status not available")
+        if not self.get_status_cli.wait_for_service(timeout_sec=0.5):
+            self.status_label.setText("Status: get_status service not available")
             self._node.get_logger().warning("get_status service not available")
             return
 
@@ -394,29 +431,35 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
         except rclpy.task.Future._EXCEPTION_TYPES as e:
             self._node.get_logger().error(f"apply_selection service call failed: {e}")
-            QMessageBox.critical(
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
                 self._widget,
                 "Dispatcher Controller",
                 f"Service call failed: {e}",
-            )
+            ))
         except Exception as e:
             self._node.get_logger().error(f"Unexpected error calling apply_selection: {e}")
-            QMessageBox.critical(
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
                 self._widget,
                 "Dispatcher Controller",
                 f"Unexpected error: {e}",
-            )
+            ))
         else:
             title = "Dispatcher Controller"
             if response.success:
-                QMessageBox.information(self._widget, title, response.message or "Selection applied")
+                QTimer.singleShot(0, lambda: QMessageBox.information(
+                    self._widget, title, response.message or "Selection applied"))
             else:
-                QMessageBox.warning(
+                QTimer.singleShot(0, lambda: QMessageBox.warning(
                     self._widget,
                     title,
                     response.message or "Failed to apply selection",
-                )
-            self.refresh_status()
+                ))
+            # Update consolidated status area
+            QTimer.singleShot(0, lambda: self._set_status_message(
+                response.message or ("Selection applied" if response.success else "Failed to apply selection"),
+                response.success
+            ))
+            QTimer.singleShot(0, self.refresh_status)
 
     def _on_set_mode_response(self, future):
         """Handle response from set_selection_mode."""
@@ -424,18 +467,26 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
         except rclpy.task.Future._EXCEPTION_TYPES as e:
             self._node.get_logger().error(f"set_selection_mode failed: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"set_selection_mode failed: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"set_selection_mode failed: {e}"))
             return
         except Exception as e:
             self._node.get_logger().error(f"Unexpected set_selection_mode error: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"Unexpected error: {e}"))
             return
 
         if response.success:
-            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Mode set")
+            QTimer.singleShot(0, lambda: QMessageBox.information(
+                self._widget, "Dispatcher Controller", response.message or "Mode set"))
         else:
-            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to set mode")
-        self.refresh_status()
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self._widget, "Dispatcher Controller", response.message or "Failed to set mode"))
+        QTimer.singleShot(0, lambda: self._set_status_message(
+            response.message or ("Mode set" if response.success else "Failed to set mode"),
+            response.success
+        ))
+        QTimer.singleShot(0, self.refresh_status)
 
     def _on_reload_response(self, future):
         """Handle response from reload_selection."""
@@ -443,18 +494,26 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
         except rclpy.task.Future._EXCEPTION_TYPES as e:
             self._node.get_logger().error(f"reload_selection failed: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"reload_selection failed: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"reload_selection failed: {e}"))
             return
         except Exception as e:
             self._node.get_logger().error(f"Unexpected reload_selection error: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"Unexpected error: {e}"))
             return
 
         if response.success:
-            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Selection reloaded")
+            QTimer.singleShot(0, lambda: QMessageBox.information(
+                self._widget, "Dispatcher Controller", response.message or "Selection reloaded"))
         else:
-            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to reload")
-        self.refresh_status()
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self._widget, "Dispatcher Controller", response.message or "Failed to reload"))
+        QTimer.singleShot(0, lambda: self._set_status_message(
+            response.message or ("Selection reloaded" if response.success else "Failed to reload"),
+            response.success
+        ))
+        QTimer.singleShot(0, self.refresh_status)
 
     def _on_stop_streaming_response(self, future):
         """Handle response from stop_streaming."""
@@ -462,18 +521,26 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
         except rclpy.task.Future._EXCEPTION_TYPES as e:
             self._node.get_logger().error(f"stop_streaming failed: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"stop_streaming failed: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"stop_streaming failed: {e}"))
             return
         except Exception as e:
             self._node.get_logger().error(f"Unexpected stop_streaming error: {e}")
-            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(
+                self._widget, "Dispatcher Controller", f"Unexpected error: {e}"))
             return
 
         if response.success:
-            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Streaming stopped")
+            QTimer.singleShot(0, lambda: QMessageBox.information(
+                self._widget, "Dispatcher Controller", response.message or "Streaming stopped"))
         else:
-            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to stop")
-        self.refresh_status()
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self._widget, "Dispatcher Controller", response.message or "Failed to stop"))
+        QTimer.singleShot(0, lambda: self._set_status_message(
+            response.message or ("Streaming stopped" if response.success else "Failed to stop"),
+            response.success
+        ))
+        QTimer.singleShot(0, self.refresh_status)
 
     def _on_status_response(self, future):
         """Update status label with dispatcher_controller status."""
@@ -481,32 +548,81 @@ class IntrospectionPlugin(Plugin):
             response = future.result()
         except rclpy.task.Future._EXCEPTION_TYPES as e:
             self._node.get_logger().error(f"get_status failed: {e}")
-            self.status_label.setText(f"Status error: {e}")
+            QTimer.singleShot(0, lambda: self._set_status_message(f"Status error: {e}", False))
+            QTimer.singleShot(0, lambda: self.status_label.setText(f"Status error: {e}"))
             return
         except Exception as e:
             self._node.get_logger().error(f"Unexpected get_status error: {e}")
-            self.status_label.setText(f"Status unexpected error: {e}")
+            QTimer.singleShot(0, lambda: self._set_status_message(f"Unexpected status error: {e}", False))
+            QTimer.singleShot(0, lambda: self.status_label.setText(f"Status unexpected error: {e}"))
             return
 
-        status_lines = [
-            f"Selection mode: {response.selection_mode}",
-            f"kafka_sink_state: {response.kafka_sink_state}",
-            f"Streaming active: {response.streaming_active}",
-            f"Reconciling: {response.reconciling}",
-            f"GUI cache count: {response.gui_selection_count}",
-            f"File cache count: {response.file_selection_count}",
-            f"All cache count: {response.all_selection_count}",
-            f"Applied topics: {len(response.applied_topics)}",
-        ]
-        if response.last_error:
-            stamp = self._format_time(response.last_error_stamp)
-            status_lines.append(f"Last error @ {stamp}: {response.last_error}")
+        # Build current snapshot used for table and summary (robust to missing fields)
+        try:
+            applied_topics = getattr(response, 'applied_topics', []) or []
+            current_snapshot = {
+                "selection_mode": str(getattr(response, 'selection_mode', '-')),
+                "kafka_sink_state": str(getattr(response, 'kafka_sink_state', '-')),
+                "streaming_active": str(bool(getattr(response, 'streaming_active', False))),
+                "reconciling": str(bool(getattr(response, 'reconciling', False))),
+                "applied_topics_count": str(len(applied_topics)),
+            }
+        except Exception as e:
+            self._node.get_logger().error(f"Failed to build status snapshot: {e}")
+            QTimer.singleShot(0, lambda: self._set_status_message("Failed to parse status", False))
+            return
 
-        if response.success:
-            status_lines.append(f"Message: {response.message}")
-        else:
-            status_lines.append(f"Status call unsuccessful: {response.message}")
-        self.status_label.setText("\n".join(status_lines))
+        # Update comparison table in UI thread
+        def _update_table():
+            last = self._last_status_snapshot or {k: "-" for _, k in self._status_fields_order}
+            for row, (label, key) in enumerate(self._status_fields_order):
+                # Last value
+                last_val = last.get(key, "-")
+                self.status_table.setItem(row, 1, QTableWidgetItem(last_val))
+                # Current value
+                curr_val = current_snapshot.get(key, "-")
+                curr_item = QTableWidgetItem(curr_val)
+                # Color coding: same -> light green, different -> light orange
+                if last_val == curr_val and last_val != "-":
+                    curr_item.setBackground(QColor("#e8f5e9"))
+                    curr_item.setForeground(QColor("#2e7d32"))
+                else:
+                    curr_item.setBackground(QColor("#fff3e0"))
+                    curr_item.setForeground(QColor("#e65100"))
+                self.status_table.setItem(row, 2, curr_item)
+
+            # Save snapshot for next comparison
+            self._last_status_snapshot = dict(current_snapshot)
+
+        QTimer.singleShot(0, _update_table)
+
+        # Compose human-readable status text
+        def _update_text_and_banner():
+            status_lines = [
+                f"Selection mode: {getattr(response, 'selection_mode', '-')}",
+                f"kafka_sink_state: {getattr(response, 'kafka_sink_state', '-')}",
+                f"Streaming active: {getattr(response, 'streaming_active', False)}",
+                f"Reconciling: {getattr(response, 'reconciling', False)}",
+                f"GUI cache count: {getattr(response, 'gui_selection_count', 0)}",
+                f"File cache count: {getattr(response, 'file_selection_count', 0)}",
+                f"All cache count: {getattr(response, 'all_selection_count', 0)}",
+                f"Applied topics: {len(applied_topics)}",
+            ]
+            last_error = getattr(response, 'last_error', '')
+            if last_error:
+                stamp = self._format_time(getattr(response, 'last_error_stamp', None))
+                status_lines.append(f"Last error @ {stamp}: {last_error}")
+
+            success = bool(getattr(response, 'success', False))
+            message = getattr(response, 'message', '')
+            self._set_status_message(message or ("OK" if success else "Error"), success)
+            if success:
+                status_lines.append(f"Message: {message}")
+            else:
+                status_lines.append(f"Status call unsuccessful: {message}")
+            self.status_label.setText("\n".join(status_lines))
+
+        QTimer.singleShot(0, _update_text_and_banner)
 
     def _format_time(self, time_msg):
         """Convert builtin_interfaces/Time to human-readable string."""
@@ -514,6 +630,21 @@ class IntrospectionPlugin(Plugin):
             return "n/a"
         # Use seconds + nanoseconds; avoid datetime conversions to keep dependencies minimal
         return f"{time_msg.sec}.{str(time_msg.nanosec).zfill(9)}"
+
+    def _set_status_message(self, text: str, success: bool):
+        """Update colored status message area with success/failure styling."""
+        if text is None:
+            text = ''
+        if success:
+            color = '#2e7d32'      # green text
+            bg = '#e8f5e9'         # light green background
+        else:
+            color = '#c62828'      # red text
+            bg = '#ffebee'         # light red background
+        self.status_result_label.setStyleSheet(
+            f"QLabel {{ color: {color}; background-color: {bg}; padding: 6px; border-radius: 4px; }}"
+        )
+        self.status_result_label.setText(text)
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
