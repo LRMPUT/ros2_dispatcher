@@ -68,3 +68,22 @@
 - No GUI client is included in this repository; selection mode `gui` requires an external client.
 - `plugin_loader`, `plugin_interfaces`, and `processing_plugins/*` contain minimal or placeholder content without runnable examples.
 - Kafka broker provisioning is not part of this codebase; `kafka.bootstrap_servers` must point to an existing cluster.
+
+## Kafka JSON sidecar
+Use `ros2_kafka_json_sidecar.py` to convert ROS 2 CDR payloads coming from the Kafka bridge into JSON:
+
+```bash
+python3 ros2_kafka_json_sidecar.py \
+  --bootstrap-servers localhost:9092 \
+  --topic-pattern '^ros2\\..*' \
+  --output-suffix .json \
+  --group-id ros2-json-sidecar \
+  --log-level INFO
+```
+
+Behavior:
+- Subscribes to a single topic (`--topic`) or a regex pattern (`--topic-pattern`, default `^ros2\\..*`).
+- Reads Kafka headers `ros_topic`, `ros_type`, and `stamp_ms` to determine how to deserialize the CDR payload.
+- Dynamically imports ROS 2 message classes using `rosidl_runtime_py.utilities.get_message`.
+- Deserializes messages with `rclpy.serialization.deserialize_message` and publishes JSON to a mirrored topic (input topic name + `--output-suffix`, default `.json`).
+- Logs and skips messages when the ROS type is unknown or the payload cannot be deserialized.
