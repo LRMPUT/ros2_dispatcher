@@ -1,5 +1,8 @@
 from rqt_gui_py.plugin import Plugin
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox, QStyledItemDelegate
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox,
+    QStyledItemDelegate, QComboBox, QFileDialog, QCheckBox
+)
 from PyQt5.QtGui import QColor, QPainter, QBrush
 from PyQt5.QtCore import QTimer, QRect, Qt
 import yaml
@@ -10,7 +13,8 @@ import rclpy.task
 # Import the service types from introspection_manager package
 from introspection_manager_msgs.srv import GetTopics
 from introspection_manager_msgs.msg import TopicInfo
-from dispatcher_controller.srv import ApplySelection
+from dispatcher_controller.srv import ApplySelection, ReloadSelection, SetSelectionMode, StopStreaming
+from dispatcher_controller.srv import GetStatus as GetControllerStatus
 
 class CustomItemDelegate(QStyledItemDelegate):
     """Custom delegate to preserve item colors even when selected."""
@@ -61,13 +65,38 @@ class IntrospectionPlugin(Plugin):
         row1.addWidget(self.btn_unselect)
         layout.addLayout(row1)
         
-        # Second row: Plugin button | Stop button
+        # Second row: Mode controls
         row2 = QHBoxLayout()
-        self.btn_plugin = QPushButton('Simulate Plugin Load/Unload')
-        self.btn_stop = QPushButton('Stop Introspection')
-        row2.addWidget(self.btn_plugin)
-        row2.addWidget(self.btn_stop)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(['gui', 'file', 'all'])
+        self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
+        self.selection_file_edit = QLineEdit()
+        self.selection_file_edit.setPlaceholderText('selection_file_path (file mode)')
+        self.btn_browse_file = QPushButton('Browse...')
+        self.apply_now_checkbox = QCheckBox('Apply now')
+        self.apply_now_checkbox.setChecked(True)
+        self.btn_set_mode = QPushButton('Set Mode')
+        row2.addWidget(QLabel('Mode:'))
+        row2.addWidget(self.mode_combo)
+        row2.addWidget(self.selection_file_edit)
+        row2.addWidget(self.btn_browse_file)
+        row2.addWidget(self.apply_now_checkbox)
+        row2.addWidget(self.btn_set_mode)
         layout.addLayout(row2)
+        
+        # Third row: Reload / Stop controls
+        row3 = QHBoxLayout()
+        self.reload_apply_checkbox = QCheckBox('Apply after reload')
+        self.reload_apply_checkbox.setChecked(False)
+        self.btn_reload = QPushButton('Reload Selection')
+        self.reset_cached_checkbox = QCheckBox('Reset cached')
+        self.reset_cached_checkbox.setChecked(False)
+        self.btn_stop = QPushButton('Stop Streaming')
+        row3.addWidget(self.btn_reload)
+        row3.addWidget(self.reload_apply_checkbox)
+        row3.addWidget(self.btn_stop)
+        row3.addWidget(self.reset_cached_checkbox)
+        layout.addLayout(row3)
         
         # Topic filter and list
         self.filter_edit = QLineEdit()
@@ -82,6 +111,18 @@ class IntrospectionPlugin(Plugin):
         self.topic_list.setSelectionMode(QListWidget.MultiSelection)  # Enable multi-select
         layout.addWidget(self.topic_list)
         
+        # Status and plugin actions
+        status_row = QHBoxLayout()
+        self.btn_refresh_status = QPushButton('Refresh Status')
+        self.btn_plugin = QPushButton('Simulate Plugin Load/Unload')
+        status_row.addWidget(self.btn_refresh_status)
+        status_row.addWidget(self.btn_plugin)
+        layout.addLayout(status_row)
+
+        self.status_label = QLabel('Status: not requested yet')
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
         # Finalize layout
         self._widget.setLayout(layout)
         context.add_widget(self._widget)  # Add the widget to the RQt UI dock
@@ -90,6 +131,10 @@ class IntrospectionPlugin(Plugin):
         SERVICE_NAME = '/introspection_manager_node/get_topics'
         self.get_topics_cli = self._node.create_client(GetTopics, SERVICE_NAME)
         self.apply_selection_cli = self._node.create_client(ApplySelection, '/apply_selection')
+        self.reload_selection_cli = self._node.create_client(ReloadSelection, '/reload_selection')
+        self.set_mode_cli = self._node.create_client(SetSelectionMode, '/set_selection_mode')
+        self.stop_streaming_cli = self._node.create_client(StopStreaming, '/stop_streaming')
+        self.get_status_cli = self._node.create_client(GetControllerStatus, '/get_status')
         
         # Connect button signals to handlers
         self.btn_update.clicked.connect(self.update_topic_list)
@@ -97,13 +142,24 @@ class IntrospectionPlugin(Plugin):
         self.btn_unselect.clicked.connect(self.handle_unselect_saved)
         self.btn_plugin.clicked.connect(self.handle_plugin_action)
         self.btn_start.clicked.connect(self.handle_apply_selection)
+        self.btn_reload.clicked.connect(self.handle_reload_selection)
+        self.btn_set_mode.clicked.connect(self.handle_set_selection_mode)
+        self.btn_stop.clicked.connect(self.handle_stop_streaming)
+        self.btn_browse_file.clicked.connect(self._browse_selection_file)
+        self.btn_refresh_status.clicked.connect(self.refresh_status)
         # Filter text -> update list
         self.filter_edit.textChanged.connect(self.filter_topics)
-        
+
         # Store all topics for filtering
         self.all_topics = []
         # Store saved topic names to preserve green coloring
         self.saved_topics = set()
+
+        # Periodic status refresh
+        self.status_timer = QTimer(self._widget)
+        self.status_timer.timeout.connect(self.refresh_status)
+        self.status_timer.start(5000)
+        self._on_mode_changed(self.mode_combo.currentText())
     
     def _extract_topic_name(self, item_text):
         """Extract topic name from item text format 'name [type]'."""
@@ -150,6 +206,80 @@ class IntrospectionPlugin(Plugin):
         request.topics = topics
         future = self.apply_selection_cli.call_async(request)
         future.add_done_callback(self._on_apply_selection_response)
+
+    def _on_mode_changed(self, mode_text):
+        """Enable or disable file selection controls based on mode."""
+        is_file_mode = mode_text == 'file'
+        self.selection_file_edit.setEnabled(is_file_mode)
+        self.btn_browse_file.setEnabled(is_file_mode)
+
+    def _browse_selection_file(self):
+        """Open a file dialog to select a YAML selection file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self._widget, "Select selection_file_path", "", "YAML Files (*.yaml *.yml);;All Files (*)")
+        if file_path:
+            self.selection_file_edit.setText(file_path)
+
+    def handle_set_selection_mode(self):
+        """Call dispatcher_controller/set_selection_mode with the chosen mode."""
+        mode = self.mode_combo.currentText()
+        if mode not in {'gui', 'file', 'all'}:
+            QMessageBox.warning(self._widget, "Dispatcher Controller", "Invalid mode selected")
+            return
+
+        selection_file_path = self.selection_file_edit.text().strip()
+        if mode == 'file' and not selection_file_path:
+            QMessageBox.warning(
+                self._widget, "Dispatcher Controller", "selection_file_path is required in file mode")
+            return
+
+        if not self.set_mode_cli.wait_for_service(timeout_sec=2.5):
+            QMessageBox.warning(self._widget, "Dispatcher Controller", "set_selection_mode not available")
+            self._node.get_logger().warning("set_selection_mode service not available")
+            return
+
+        request = SetSelectionMode.Request()
+        request.selection_mode = mode
+        request.selection_file_path = selection_file_path
+        request.apply_now = self.apply_now_checkbox.isChecked()
+        future = self.set_mode_cli.call_async(request)
+        future.add_done_callback(self._on_set_mode_response)
+
+    def handle_reload_selection(self):
+        """Invoke dispatcher_controller/reload_selection."""
+        if not self.reload_selection_cli.wait_for_service(timeout_sec=2.5):
+            QMessageBox.warning(self._widget, "Dispatcher Controller", "reload_selection not available")
+            self._node.get_logger().warning("reload_selection service not available")
+            return
+
+        request = ReloadSelection.Request()
+        request.selection_file_path = self.selection_file_edit.text().strip()
+        request.apply_now = self.reload_apply_checkbox.isChecked()
+        future = self.reload_selection_cli.call_async(request)
+        future.add_done_callback(self._on_reload_response)
+
+    def handle_stop_streaming(self):
+        """Call dispatcher_controller/stop_streaming."""
+        if not self.stop_streaming_cli.wait_for_service(timeout_sec=2.5):
+            QMessageBox.warning(self._widget, "Dispatcher Controller", "stop_streaming not available")
+            self._node.get_logger().warning("stop_streaming service not available")
+            return
+
+        request = StopStreaming.Request()
+        request.reset_cached = self.reset_cached_checkbox.isChecked()
+        future = self.stop_streaming_cli.call_async(request)
+        future.add_done_callback(self._on_stop_streaming_response)
+
+    def refresh_status(self):
+        """Fetch current dispatcher_controller status."""
+        if not self.get_status_cli.wait_for_service(timeout_sec=2.5):
+            self.status_label.setText("Status: get_status not available")
+            self._node.get_logger().warning("get_status service not available")
+            return
+
+        request = GetControllerStatus.Request()
+        future = self.get_status_cli.call_async(request)
+        future.add_done_callback(self._on_status_response)
 
     def update_topic_list(self):
         """Fetch topics from introspection manager and update the list."""
@@ -286,6 +416,104 @@ class IntrospectionPlugin(Plugin):
                     title,
                     response.message or "Failed to apply selection",
                 )
+            self.refresh_status()
+
+    def _on_set_mode_response(self, future):
+        """Handle response from set_selection_mode."""
+        try:
+            response = future.result()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"set_selection_mode failed: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"set_selection_mode failed: {e}")
+            return
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected set_selection_mode error: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            return
+
+        if response.success:
+            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Mode set")
+        else:
+            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to set mode")
+        self.refresh_status()
+
+    def _on_reload_response(self, future):
+        """Handle response from reload_selection."""
+        try:
+            response = future.result()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"reload_selection failed: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"reload_selection failed: {e}")
+            return
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected reload_selection error: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            return
+
+        if response.success:
+            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Selection reloaded")
+        else:
+            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to reload")
+        self.refresh_status()
+
+    def _on_stop_streaming_response(self, future):
+        """Handle response from stop_streaming."""
+        try:
+            response = future.result()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"stop_streaming failed: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"stop_streaming failed: {e}")
+            return
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected stop_streaming error: {e}")
+            QMessageBox.critical(self._widget, "Dispatcher Controller", f"Unexpected error: {e}")
+            return
+
+        if response.success:
+            QMessageBox.information(self._widget, "Dispatcher Controller", response.message or "Streaming stopped")
+        else:
+            QMessageBox.warning(self._widget, "Dispatcher Controller", response.message or "Failed to stop")
+        self.refresh_status()
+
+    def _on_status_response(self, future):
+        """Update status label with dispatcher_controller status."""
+        try:
+            response = future.result()
+        except rclpy.task.Future._EXCEPTION_TYPES as e:
+            self._node.get_logger().error(f"get_status failed: {e}")
+            self.status_label.setText(f"Status error: {e}")
+            return
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected get_status error: {e}")
+            self.status_label.setText(f"Status unexpected error: {e}")
+            return
+
+        status_lines = [
+            f"Selection mode: {response.selection_mode}",
+            f"kafka_sink_state: {response.kafka_sink_state}",
+            f"Streaming active: {response.streaming_active}",
+            f"Reconciling: {response.reconciling}",
+            f"GUI cache count: {response.gui_selection_count}",
+            f"File cache count: {response.file_selection_count}",
+            f"All cache count: {response.all_selection_count}",
+            f"Applied topics: {len(response.applied_topics)}",
+        ]
+        if response.last_error:
+            stamp = self._format_time(response.last_error_stamp)
+            status_lines.append(f"Last error @ {stamp}: {response.last_error}")
+
+        if response.success:
+            status_lines.append(f"Message: {response.message}")
+        else:
+            status_lines.append(f"Status call unsuccessful: {response.message}")
+        self.status_label.setText("\n".join(status_lines))
+
+    def _format_time(self, time_msg):
+        """Convert builtin_interfaces/Time to human-readable string."""
+        if time_msg is None:
+            return "n/a"
+        # Use seconds + nanoseconds; avoid datetime conversions to keep dependencies minimal
+        return f"{time_msg.sec}.{str(time_msg.nanosec).zfill(9)}"
     
     def handle_plugin_action(self):
         """Simulate plugin load/unload (placeholder)."""
@@ -306,8 +534,13 @@ class IntrospectionPlugin(Plugin):
     def shutdown_plugin(self):
         """Called when the plugin is being shut down."""
         # Destroy service clients
+        self.status_timer.stop()
         self._node.destroy_client(self.get_topics_cli)
         self._node.destroy_client(self.apply_selection_cli)
+        self._node.destroy_client(self.reload_selection_cli)
+        self._node.destroy_client(self.set_mode_cli)
+        self._node.destroy_client(self.stop_streaming_cli)
+        self._node.destroy_client(self.get_status_cli)
     
     def save_settings(self, plugin_settings, instance_settings):
         """Save plugin settings (optional)."""
