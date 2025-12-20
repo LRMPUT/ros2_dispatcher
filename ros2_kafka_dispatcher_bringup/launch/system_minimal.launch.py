@@ -14,6 +14,8 @@ def generate_launch_description():
     qos_depth = LaunchConfiguration("qos_depth")
     controller_log_level = LaunchConfiguration("controller_log_level")
     kafka_sink_log_level = LaunchConfiguration("kafka_sink_log_level")
+    introspection_manager_param_file = LaunchConfiguration("introspection_manager_param_file")
+    introspection_manager_log_level = LaunchConfiguration("introspection_manager_log_level")
 
     dispatcher_launch = PathJoinSubstitution(
         [
@@ -29,6 +31,13 @@ def generate_launch_description():
             "kafka_sink.launch.py",
         ]
     )
+    introspection_manager_launch = PathJoinSubstitution(
+        [
+            FindPackageShare("ros2_kafka_dispatcher_bringup"),
+            "launch",
+            "introspection_manager.launch.py",
+        ]
+    )
 
     return LaunchDescription(
         [
@@ -40,6 +49,15 @@ def generate_launch_description():
             DeclareLaunchArgument("qos_depth", default_value="10"),
             DeclareLaunchArgument("controller_log_level", default_value="debug"),
             DeclareLaunchArgument("kafka_sink_log_level", default_value="info"),
+            DeclareLaunchArgument("introspection_manager_param_file", default_value=""),
+            DeclareLaunchArgument("introspection_manager_log_level", default_value="DEBUG"),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(introspection_manager_launch),
+                launch_arguments={
+                    "introspection_manager_param_file": introspection_manager_param_file,
+                    "introspection_manager_log_level": introspection_manager_log_level,
+                }.items(),
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(dispatcher_launch),
                 launch_arguments={

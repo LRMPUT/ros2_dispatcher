@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    publisher_queue_depth: 1
+    publisher_reliability: "reliable"
+    publisher_durability: "volatile"
+    publish_on_change: true
+    filter_hidden: true
+    introspection_enabled: true
