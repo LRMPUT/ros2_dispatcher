@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake REQUIRED)
-find_package(RdKafka REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
@@ -21,11 +20,13 @@ target_include_directories(${PROJECT_NAME}
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
+  PRIVATE
+    /usr/include/librdkafka
 )
 
 target_link_libraries(${PROJECT_NAME}
   PUBLIC
-    RdKafka::rdkafka++
+    rdkafka++
     Threads::Threads
 )
 
@@ -40,7 +41,7 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-ament_export_targets(${PROJECT_NAME}_export HAS_LIBRARY_TARGET ${PROJECT_NAME})
-ament_export_dependencies(RdKafka Threads)
+ament_export_targets(${PROJECT_NAME}_export HAS_LIBRARY_TARGET)
+ament_export_dependencies(Threads)
 
 ament_package()

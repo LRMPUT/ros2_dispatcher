@@ -101,7 +101,7 @@ KafkaSendResult KafkaProducer::try_produce_locked(const QueuedRecord & record)
     return {SendStatus::PRODUCER_UNAVAILABLE, "producer not available"};
   }
 
-  std::unique_ptr<RdKafka::Headers> headers = RdKafka::Headers::create();
+  RdKafka::Headers * headers = RdKafka::Headers::create();
   for (const auto & header : record.headers) {
     headers->add(header.key, header.value);
   }
@@ -116,13 +116,16 @@ KafkaSendResult KafkaProducer::try_produce_locked(const QueuedRecord & record)
     record.key.empty() ? 0 : record.key.size(),
     record.timestamp_ms,
     nullptr,
-    headers.get());
+    headers);
 
   if (result == RdKafka::ERR_NO_ERROR) {
-    headers.release();  // ownership transferred on success
+    // ownership of headers transferred to librdkafka on success
     ++sent_ok_;
     return {SendStatus::SENT, {}};
   }
+
+  // on error, we need to delete headers since ownership wasn't transferred
+  delete headers;
 
   if (result == RdKafka::ERR__QUEUE_FULL) {
     return {SendStatus::QUEUE_FULL, RdKafka::err2str(result), false};
