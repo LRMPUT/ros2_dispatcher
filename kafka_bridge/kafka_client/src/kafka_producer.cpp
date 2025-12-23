@@ -19,7 +19,7 @@
 #include <string>
 #include <utility>
 
-#include "rdkafkacpp.h"
+#include <librdkafka/rdkafkacpp.h>
 
 namespace kafka_client
 {

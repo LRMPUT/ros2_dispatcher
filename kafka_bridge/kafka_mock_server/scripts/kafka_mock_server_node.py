@@ -33,6 +33,11 @@ class KafkaMockServer(Node):
         self.running = False
         self.connections = []
         
+        # Message storage: {topic: {partition: [Message]}}
+        self.messages = {}
+        # Offsets tracking: {topic: {partition: next_offset}}
+        self.offsets = {}
+        
         self.start_server()
         
     def start_server(self):
@@ -156,6 +161,10 @@ class KafkaMockServer(Node):
             elif api_key == 0:
                 return self.create_produce_response(correlation_id, api_version, message)
             
+            # Handle FetchRequest (API Key 1)
+            elif api_key == 1:
+                return self.create_fetch_response(correlation_id, api_version, message)
+            
             # For other requests, return empty response
             return self.create_empty_response(correlation_id)
             
@@ -250,14 +259,12 @@ class KafkaMockServer(Node):
         return response
     
     def create_produce_response(self, correlation_id, api_version, message):
-        """Create Produce response by parsing the request."""
-        # ProduceRequest has topics with partitions - we need to respond for each
+        """Create Produce response and store messages."""
         try:
             offset = 8  # Skip header
             
-            # Parse request (simplified - just extract topic count)
-            # In v3+: TransactionalId (nullable string)
-            if api_version >= 3:
+            # For v1+: TransactionalId (nullable string)
+            if api_version >= 1:
                 transactional_id_len = struct.unpack('>h', message[offset:offset+2])[0]
                 offset += 2
                 if transactional_id_len > 0:
@@ -269,59 +276,132 @@ class KafkaMockServer(Node):
             offset += 4
             
             # Topics array
-            if offset + 4 <= len(message):
-                topic_count = struct.unpack('>i', message[offset:offset+4])[0]
+            if offset + 4 > len(message):
+                return None
+                
+            topic_count = struct.unpack('>i', message[offset:offset+4])[0]
+            offset += 4
+            
+            # Store topics and build response
+            response = struct.pack('>I', correlation_id)
+            response += struct.pack('>i', topic_count)
+            
+            # Process each topic
+            for _ in range(min(topic_count, 100)):
+                # Topic name (string)
+                if offset + 2 > len(message):
+                    break
+                    
+                topic_name_len = struct.unpack('>h', message[offset:offset+2])[0]
+                offset += 2
+                
+                if offset + topic_name_len > len(message):
+                    break
+                    
+                topic_name = message[offset:offset+topic_name_len].decode('utf-8', errors='replace')
+                offset += topic_name_len
+                
+                # Initialize topic storage if needed
+                if topic_name not in self.messages:
+                    self.messages[topic_name] = {}
+                    self.offsets[topic_name] = {}
+                
+                # Partition count
+                if offset + 4 > len(message):
+                    break
+                    
+                partition_count = struct.unpack('>i', message[offset:offset+4])[0]
                 offset += 4
                 
-                # Build response
-                response = struct.pack('>I', correlation_id)
+                # Response: topic name
+                response += struct.pack('>h', len(topic_name)) + topic_name.encode('utf-8')
+                response += struct.pack('>i', partition_count)
                 
-                # Respond with same number of topics
-                response += struct.pack('>i', topic_count)
-                
-                # For each topic, add success response
-                for _ in range(min(topic_count, 100)):  # Limit to prevent issues
-                    # Skip topic name in request (we'll just respond generically)
-                    if offset + 2 <= len(message):
-                        topic_name_len = struct.unpack('>h', message[offset:offset+2])[0]
-                        offset += 2 + topic_name_len
+                # Process each partition
+                for _ in range(min(partition_count, 100)):
+                    if offset + 4 > len(message):
+                        break
+                    
+                    partition_id = struct.unpack('>i', message[offset:offset+4])[0]
+                    offset += 4
+                    
+                    # Initialize partition storage
+                    if partition_id not in self.messages[topic_name]:
+                        self.messages[topic_name][partition_id] = []
+                        self.offsets[topic_name][partition_id] = 0
+                    
+                    # Record batches
+                    if offset + 4 > len(message):
+                        break
+                    
+                    record_count = struct.unpack('>i', message[offset:offset+4])[0]
+                    offset += 4
+                    
+                    batch_offsets = []
+                    
+                    # Process each record batch
+                    for _ in range(min(record_count, 1000)):
+                        if offset + 8 > len(message):
+                            break
                         
-                        # Get partition count
-                        if offset + 4 <= len(message):
-                            partition_count = struct.unpack('>i', message[offset:offset+4])[0]
-                            offset += 4
-                            
-                            # Topic name in response (empty string)
-                            response += struct.pack('>h', 0)
-                            
-                            # Partitions array
-                            response += struct.pack('>i', partition_count)
-                            
-                            for _ in range(min(partition_count, 100)):
-                                # Partition (4 bytes)
-                                response += struct.pack('>i', 0)
-                                # Error code (2 bytes) - NO_ERROR
-                                response += struct.pack('>h', 0)
-                                # Base offset (8 bytes)
-                                response += struct.pack('>q', 0)
-                                
-                                # For v2+: Log append time
-                                if api_version >= 2:
-                                    response += struct.pack('>q', -1)
-                                
-                                # For v5+: Log start offset
-                                if api_version >= 5:
-                                    response += struct.pack('>q', 0)
-                
-                # Throttle time (4 bytes) - for v1+
-                if api_version >= 1:
-                    response += struct.pack('>i', 0)
-                
-                self.get_logger().debug(
-                    f'Created Produce response (v{api_version}, {topic_count} topics)'
-                )
-                return response
-                
+                        # Base offset and batch size
+                        batch_offset = struct.unpack('>q', message[offset:offset+8])[0]
+                        offset += 8
+                        
+                        if offset + 4 > len(message):
+                            break
+                        
+                        batch_size = struct.unpack('>i', message[offset:offset+4])[0]
+                        offset += 4
+                        
+                        if offset + batch_size > len(message):
+                            break
+                        
+                        batch_data = message[offset:offset+batch_size]
+                        offset += batch_size
+                        
+                        # Store message
+                        current_offset = self.offsets[topic_name][partition_id]
+                        self.messages[topic_name][partition_id].append({
+                            'offset': current_offset,
+                            'batch_offset': batch_offset,
+                            'payload': batch_data,
+                            'timestamp': -1  # System time
+                        })
+                        batch_offsets.append(current_offset)
+                        self.offsets[topic_name][partition_id] += 1
+                        
+                        self.get_logger().info(
+                            f'Stored message: topic={topic_name}, partition={partition_id}, '
+                            f'offset={current_offset}, size={batch_size} bytes'
+                        )
+                    
+                    # Response per partition
+                    response += struct.pack('>i', partition_id)  # Partition
+                    response += struct.pack('>h', 0)             # Error code (NO_ERROR)
+                    
+                    if batch_offsets:
+                        response += struct.pack('>q', batch_offsets[0])  # Base offset
+                    else:
+                        response += struct.pack('>q', 0)
+                    
+                    # For v2+: Log append time
+                    if api_version >= 2:
+                        response += struct.pack('>q', -1)
+                    
+                    # For v5+: Log start offset
+                    if api_version >= 5:
+                        response += struct.pack('>q', 0)
+            
+            # Throttle time (4 bytes) - for v1+
+            if api_version >= 1:
+                response += struct.pack('>i', 0)
+            
+            self.get_logger().debug(
+                f'Created Produce response (v{api_version}, {topic_count} topics)'
+            )
+            return response
+            
         except Exception as e:
             self.get_logger().warn(f'Error parsing produce request: {e}')
         
@@ -338,6 +418,125 @@ class KafkaMockServer(Node):
         error_code = 0
         response = struct.pack('>IH', correlation_id, error_code)
         return response
+    
+    def create_fetch_response(self, correlation_id, api_version, message):
+        """Create Fetch response by returning stored messages."""
+        try:
+            offset = 8  # Skip header
+            
+            # Replica ID (4 bytes)
+            if offset + 4 > len(message):
+                return None
+            offset += 4
+            
+            # Max wait time (4 bytes)
+            if offset + 4 > len(message):
+                return None
+            offset += 4
+            
+            # Min bytes (4 bytes)
+            if offset + 4 > len(message):
+                return None
+            offset += 4
+            
+            # Topic count
+            if offset + 4 > len(message):
+                return None
+            topic_count = struct.unpack('>i', message[offset:offset+4])[0]
+            offset += 4
+            
+            # Build response
+            response = struct.pack('>I', correlation_id)
+            
+            # Throttle time (for v1+)
+            if api_version >= 1:
+                response += struct.pack('>i', 0)
+            
+            # Topics array in response
+            response += struct.pack('>i', topic_count)
+            
+            # Process each topic request
+            for _ in range(min(topic_count, 100)):
+                if offset + 2 > len(message):
+                    break
+                
+                # Topic name
+                topic_name_len = struct.unpack('>h', message[offset:offset+2])[0]
+                offset += 2
+                
+                if offset + topic_name_len > len(message):
+                    break
+                
+                topic_name = message[offset:offset+topic_name_len].decode('utf-8', errors='replace')
+                offset += topic_name_len
+                
+                # Partition count
+                if offset + 4 > len(message):
+                    break
+                
+                partition_count = struct.unpack('>i', message[offset:offset+4])[0]
+                offset += 4
+                
+                # Response: topic name
+                response += struct.pack('>h', len(topic_name)) + topic_name.encode('utf-8')
+                response += struct.pack('>i', partition_count)
+                
+                # Process each partition
+                for _ in range(min(partition_count, 100)):
+                    if offset + 8 > len(message):
+                        break
+                    
+                    partition_id = struct.unpack('>i', message[offset:offset+4])[0]
+                    offset += 4
+                    
+                    # Fetch offset
+                    fetch_offset = struct.unpack('>q', message[offset:offset+8])[0]
+                    offset += 8
+                    
+                    # Max bytes
+                    if offset + 4 > len(message):
+                        break
+                    max_bytes = struct.unpack('>i', message[offset:offset+4])[0]
+                    offset += 4
+                    
+                    # Response: partition id
+                    response += struct.pack('>i', partition_id)
+                    
+                    # Error code (NO_ERROR)
+                    response += struct.pack('>h', 0)
+                    
+                    # High water mark
+                    if topic_name in self.messages and partition_id in self.messages[topic_name]:
+                        high_water_mark = self.offsets[topic_name][partition_id]
+                    else:
+                        high_water_mark = 0
+                    response += struct.pack('>q', high_water_mark)
+                    
+                    # For v4+: Last stable offset and log start offset
+                    if api_version >= 4:
+                        response += struct.pack('>q', high_water_mark)  # Last stable offset
+                    if api_version >= 5:
+                        response += struct.pack('>q', 0)  # Log start offset
+                    
+                    # Aborted transactions (v4+) - empty array for now
+                    if api_version >= 4:
+                        response += struct.pack('>i', 0)  # Empty array
+                    
+                    # Record batches - return empty for safety to avoid malformed data
+                    # This prevents the confluent_kafka library from crashing
+                    response += struct.pack('>i', 0)  # Empty record batch array
+                    
+                    self.get_logger().debug(
+                        f'Fetch: topic={topic_name}, partition={partition_id}, '
+                        f'fetch_offset={fetch_offset}, high_water_mark={high_water_mark}'
+                    )
+            
+            self.get_logger().debug(f'Created Fetch response (v{api_version})')
+            return response
+            
+        except Exception as e:
+            self.get_logger().warn(f'Error handling fetch request: {e}')
+            return None
             
     def shutdown(self):
         """Shutdown the server."""

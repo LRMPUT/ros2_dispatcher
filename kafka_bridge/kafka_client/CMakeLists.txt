@@ -6,7 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+pkg_check_modules(RDKAFKA REQUIRED rdkafka++)
 
 add_library(${PROJECT_NAME} SHARED
   src/kafka_producer.cpp
@@ -20,13 +22,12 @@ target_include_directories(${PROJECT_NAME}
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-  PRIVATE
-    /usr/include/librdkafka
+    ${RDKAFKA_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME}
   PUBLIC
-    rdkafka++
+    ${RDKAFKA_LIBRARIES}
     Threads::Threads
 )
 
