@@ -14,6 +14,7 @@
   <depend>lifecycle_msgs</depend>
   <depend>rcl_interfaces</depend>
   <depend>rclcpp_components</depend>
+  <depend>composition_interfaces</depend>
   <depend>introspection_manager_msgs</depend>
   <depend>yaml-cpp</depend>
   <depend>builtin_interfaces</depend>

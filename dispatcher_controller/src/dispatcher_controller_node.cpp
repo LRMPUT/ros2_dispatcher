@@ -4,6 +4,7 @@
 #include <fstream>
 #include <set>
 #include <sstream>
+#include <cstdint>
 
 #include "yaml-cpp/yaml.h"
 #include <rclcpp/logging.hpp>
@@ -12,6 +13,113 @@ namespace dispatcher_controller
 {
 
 using namespace std::chrono_literals;
+
+namespace
+{
+
+std::string sanitize_topic_segment(const std::string & topic)
+{
+  std::string sanitized = topic;
+  std::replace(sanitized.begin(), sanitized.end(), '/', '_');
+  while (!sanitized.empty() && sanitized.front() == '_') {
+    sanitized.erase(sanitized.begin());
+  }
+  if (sanitized.empty()) {
+    sanitized = "topic";
+  }
+  return sanitized;
+}
+
+std::string default_tool_node_name(const std::string & plugin_name, const std::string & topic_name)
+{
+  std::string base = plugin_name;
+  auto pos = base.find_last_of("::");
+  if (pos != std::string::npos && pos + 1 < base.size()) {
+    base = base.substr(pos + 1);
+  }
+  return sanitize_topic_segment(base + "_" + topic_name);
+}
+
+std::string default_output_topic(const std::string & input_topic, const std::string & node_name)
+{
+  std::string prefix = node_name.empty() ? std::string("topic_tools") : node_name;
+  std::string normalized = input_topic;
+  if (!normalized.empty() && normalized.front() == '/') {
+    normalized.erase(normalized.begin());
+  }
+  if (normalized.empty()) {
+    return "/" + prefix;
+  }
+  return "/" + prefix + "/" + normalized;
+}
+
+rclcpp::Parameter parse_parameter_value(
+  const std::string & name, const YAML::Node & value, std::string & error_out)
+{
+  if (value.IsScalar()) {
+    try {
+      return rclcpp::Parameter(name, value.as<bool>());
+    } catch (...) {
+    }
+    try {
+      return rclcpp::Parameter(name, value.as<int64_t>());
+    } catch (...) {
+    }
+    try {
+      return rclcpp::Parameter(name, value.as<double>());
+    } catch (...) {
+    }
+    try {
+      return rclcpp::Parameter(name, value.as<std::string>());
+    } catch (...) {
+    }
+  } else if (value.IsSequence()) {
+    try {
+      std::vector<bool> vals;
+      vals.reserve(value.size());
+      for (const auto & item : value) {
+        vals.push_back(item.as<bool>());
+      }
+      return rclcpp::Parameter(name, vals);
+    } catch (...) {
+    }
+
+    try {
+      std::vector<int64_t> vals;
+      vals.reserve(value.size());
+      for (const auto & item : value) {
+        vals.push_back(item.as<int64_t>());
+      }
+      return rclcpp::Parameter(name, vals);
+    } catch (...) {
+    }
+
+    try {
+      std::vector<double> vals;
+      vals.reserve(value.size());
+      for (const auto & item : value) {
+        vals.push_back(item.as<double>());
+      }
+      return rclcpp::Parameter(name, vals);
+    } catch (...) {
+    }
+
+    try {
+      std::vector<std::string> vals;
+      vals.reserve(value.size());
+      for (const auto & item : value) {
+        vals.push_back(item.as<std::string>());
+      }
+      return rclcpp::Parameter(name, vals);
+    } catch (...) {
+    }
+  }
+
+  error_out = "Unsupported parameter value for " + name;
+  throw std::runtime_error(error_out);
+}
+
+}  // namespace
 
 DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dispatcher_controller", options)
@@ -34,6 +142,8 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   all_mode_denylist_ = declare_parameter<std::vector<std::string>>(
     "all_mode_denylist", std::vector<std::string>{});
   all_mode_hide_rosout_ = declare_parameter<bool>("all_mode_hide_rosout", true);
+  component_container_name_ = declare_parameter<std::string>(
+    "component_container_name", "/ros2_kafka_dispatcher_container");
 
   bool valid_mode{true};
   selection_mode_ = parse_mode(
@@ -53,6 +163,10 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     introspection_service_name_, rmw_qos_profile_services_default, client_cb_group_);
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
     introspection_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
+  load_node_client_ = create_client<composition_interfaces::srv::LoadNode>(
+    component_container_name_ + "/load_node", rmw_qos_profile_services_default, client_cb_group_);
+  unload_node_client_ = create_client<composition_interfaces::srv::UnloadNode>(
+    component_container_name_ + "/unload_node", rmw_qos_profile_services_default, client_cb_group_);
 
   apply_srv_ = create_service<dispatcher_controller::srv::ApplySelection>(
     "apply_selection",
@@ -182,7 +296,13 @@ void DispatcherControllerNode::handle_apply_selection(
     return;
   }
 
-  auto topics = request->topics;
+  std::vector<TopicSelection> topics;
+  topics.reserve(request->topics.size());
+  for (const auto & topic : request->topics) {
+    TopicSelection selection;
+    selection.topic = topic;
+    topics.push_back(selection);
+  }
   std::string error;
   if (!infer_missing_types(topics, error)) {
     response->success = false;
@@ -210,6 +330,7 @@ void DispatcherControllerNode::handle_apply_selection(
   }
 
   last_gui_selection_.topics = topics;
+  last_gui_selection_.sink_topics = applied_selection_.sink_topics;
   last_gui_selection_.timestamp = now();
   phase_ = ControllerPhase::IDLE;
   response->success = true;
@@ -227,9 +348,10 @@ void DispatcherControllerNode::handle_reload_selection(
     return;
   }
 
-  std::vector<introspection_manager_msgs::msg::TopicInfo> selection;
+  std::vector<TopicSelection> selection;
   std::string error;
   bool apply_now = request->apply_now;
+  TopicToolsPlan plan;
 
   if (selection_mode_ == SelectionMode::FILE) {
     std::string path = request->selection_file_path.empty() ? selection_file_path_ :
@@ -248,7 +370,15 @@ void DispatcherControllerNode::handle_reload_selection(
       last_error_stamp_ = now();
       return;
     }
+    if (!build_topic_tools_plan(selection, plan, error)) {
+      response->success = false;
+      response->message = error;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      return;
+    }
     last_file_selection_.topics = selection;
+    last_file_selection_.sink_topics = plan.sink_topics;
     last_file_selection_.timestamp = now();
   } else if (selection_mode_ == SelectionMode::ALL) {
     if (!discover_all_topics(selection, error)) {
@@ -258,7 +388,15 @@ void DispatcherControllerNode::handle_reload_selection(
       last_error_stamp_ = now();
       return;
     }
+    if (!build_topic_tools_plan(selection, plan, error)) {
+      response->success = false;
+      response->message = error;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      return;
+    }
     last_all_selection_.topics = selection;
+    last_all_selection_.sink_topics = plan.sink_topics;
     last_all_selection_.timestamp = now();
   } else {  // GUI mode
     if (last_gui_selection_.topics.empty()) {
@@ -267,8 +405,19 @@ void DispatcherControllerNode::handle_reload_selection(
       return;
     }
     selection = last_gui_selection_.topics;
+    plan.sink_topics = last_gui_selection_.sink_topics;
     if (request->selection_file_path.size() > 0) {
       RCLCPP_WARN(get_logger(), "selection_file_path ignored in gui mode reload");
+    }
+  }
+
+  if (plan.sink_topics.empty() && !selection.empty()) {
+    if (!build_topic_tools_plan(selection, plan, error)) {
+      response->success = false;
+      response->message = error;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      return;
     }
   }
 
@@ -318,6 +467,15 @@ void DispatcherControllerNode::handle_stop_streaming(
     return;
   }
 
+  if (!clear_active_topic_tools(error)) {
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = error;
+    last_error_stamp_ = now();
+    response->success = false;
+    response->message = error;
+    return;
+  }
+
   if (request->reset_cached) {
     last_gui_selection_ = SelectionSnapshot{};
     last_file_selection_ = SelectionSnapshot{};
@@ -340,7 +498,8 @@ void DispatcherControllerNode::handle_get_status(
   response->kafka_sink_state = state ? (state_string(*state)) : "unknown";
   response->streaming_active = state &&
     *state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
-  response->applied_topics = applied_selection_.topics;
+  response->applied_topics = applied_selection_.sink_topics.empty() ?
+    to_topic_info(applied_selection_.topics) : applied_selection_.sink_topics;
   response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
   response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
   response->all_selection_count = static_cast<uint32_t>(last_all_selection_.topics.size());
@@ -364,12 +523,14 @@ bool DispatcherControllerNode::switch_mode(
     selection_file_path_ = file_path;
   }
 
-  std::vector<introspection_manager_msgs::msg::TopicInfo> selection;
+  std::vector<TopicSelection> selection;
+  TopicToolsPlan plan;
 
   if (apply_now) {
     if (new_mode == SelectionMode::GUI) {
       if (!last_gui_selection_.topics.empty()) {
         selection = last_gui_selection_.topics;
+        plan.sink_topics = last_gui_selection_.sink_topics;
       } else {
         RCLCPP_INFO(
           get_logger(), "Switched to gui mode without cached selection; idle until ApplySelection");
@@ -386,14 +547,28 @@ bool DispatcherControllerNode::switch_mode(
       if (!infer_missing_types(selection, error_out)) {
         return false;
       }
+      if (!build_topic_tools_plan(selection, plan, error_out)) {
+        return false;
+      }
       last_file_selection_.topics = selection;
+      last_file_selection_.sink_topics = plan.sink_topics;
       last_file_selection_.timestamp = now();
     } else {  // ALL
       if (!discover_all_topics(selection, error_out)) {
         return false;
       }
+      if (!build_topic_tools_plan(selection, plan, error_out)) {
+        return false;
+      }
       last_all_selection_.topics = selection;
+      last_all_selection_.sink_topics = plan.sink_topics;
       last_all_selection_.timestamp = now();
+    }
+
+    if (plan.sink_topics.empty() && !selection.empty()) {
+      if (!build_topic_tools_plan(selection, plan, error_out)) {
+        return false;
+      }
     }
 
     if (!ensure_topic_limits(selection, error_out)) {
@@ -415,7 +590,7 @@ bool DispatcherControllerNode::switch_mode(
 }
 
 bool DispatcherControllerNode::apply_selection(
-  const std::vector<introspection_manager_msgs::msg::TopicInfo> & topics, std::string & error_out)
+  const std::vector<TopicSelection> & topics, std::string & error_out)
 {
   if (topics.empty()) {
     error_out = "No topics to apply";
@@ -425,6 +600,18 @@ bool DispatcherControllerNode::apply_selection(
   auto state = get_kafka_sink_state();
   if (!state) {
     error_out = "Unable to get kafka_sink state";
+    return false;
+  }
+
+  TopicToolsPlan plan;
+  std::vector<TopicSelection> validated_topics = topics;
+  if (validate_topics_) {
+    if (!infer_missing_types(validated_topics, error_out)) {
+      return false;
+    }
+  }
+
+  if (!build_topic_tools_plan(validated_topics, plan, error_out)) {
     return false;
   }
 
@@ -449,14 +636,11 @@ bool DispatcherControllerNode::apply_selection(
     }
   }
 
-  if (validate_topics_) {
-    auto copy = topics;
-    if (!infer_missing_types(copy, error_out)) {
-      return false;
-    }
+  if (!reconcile_topic_tools(plan, error_out)) {
+    return false;
   }
 
-  if (!set_kafka_sink_subscriptions_yaml(topics, error_out)) {
+  if (!set_kafka_sink_subscriptions_yaml(plan.sink_topics, error_out)) {
     return false;
   }
 
@@ -466,7 +650,8 @@ bool DispatcherControllerNode::apply_selection(
     return false;
   }
 
-  applied_selection_.topics = topics;
+  applied_selection_.topics = validated_topics;
+  applied_selection_.sink_topics = plan.sink_topics;
   applied_selection_.timestamp = now();
 
   if (disable_introspection_after_apply_) {
@@ -560,9 +745,233 @@ bool DispatcherControllerNode::set_kafka_sink_subscriptions_yaml(
   return true;
 }
 
-bool DispatcherControllerNode::load_file_selection(
-  const std::string & path, std::vector<introspection_manager_msgs::msg::TopicInfo> & out,
+bool DispatcherControllerNode::build_topic_tools_plan(
+  const std::vector<TopicSelection> & selection, TopicToolsPlan & plan, std::string & error_out)
+{
+  plan.sink_topics.clear();
+  plan.tools.clear();
+
+  for (const auto & entry : selection) {
+    if (entry.topic.name.empty()) {
+      error_out = "Selection entry missing topic_name";
+      return false;
+    }
+
+    introspection_manager_msgs::msg::TopicInfo sink_topic = entry.topic;
+
+    if (entry.topic_tools && entry.topic_tools->enabled) {
+      const auto & tools_cfg = *entry.topic_tools;
+      if (tools_cfg.plugin_name.empty()) {
+        error_out = "topic_tools.plugin is required when topic_tools is enabled";
+        return false;
+      }
+
+      std::string node_name = tools_cfg.node_name.empty() ?
+        default_tool_node_name(tools_cfg.plugin_name, entry.topic.name) : tools_cfg.node_name;
+      std::string output_topic = tools_cfg.output_topic.empty() ?
+        default_output_topic(entry.topic.name, node_name) : tools_cfg.output_topic;
+      std::string output_type = tools_cfg.output_type.empty() ? entry.topic.type : tools_cfg.output_type;
+
+      std::vector<rclcpp::Parameter> parameters = tools_cfg.parameters;
+      bool has_input{false};
+      bool has_output{false};
+      for (const auto & param : parameters) {
+        if (param.get_name() == "input_topic") {
+          has_input = true;
+        } else if (param.get_name() == "output_topic") {
+          has_output = true;
+        }
+      }
+      if (!has_input) {
+        parameters.emplace_back("input_topic", entry.topic.name);
+      }
+      if (!has_output) {
+        parameters.emplace_back("output_topic", output_topic);
+      }
+
+      ResolvedTopicTool tool;
+      tool.input_topic = entry.topic.name;
+      tool.output_topic = output_topic;
+      tool.package_name = tools_cfg.package_name;
+      tool.plugin_name = tools_cfg.plugin_name;
+      tool.node_name = node_name;
+      tool.parameters = parameters;
+      tool.output_type = output_type;
+      plan.tools.push_back(tool);
+
+      sink_topic.name = output_topic;
+      sink_topic.type = output_type.empty() ? entry.topic.type : output_type;
+    }
+
+    plan.sink_topics.push_back(sink_topic);
+  }
+
+  return true;
+}
+
+bool DispatcherControllerNode::reconcile_topic_tools(const TopicToolsPlan & plan, std::string & error_out)
+{
+  if (!clear_active_topic_tools(error_out)) {
+    return false;
+  }
+
+  for (const auto & tool : plan.tools) {
+    ActiveTopicTool active;
+    if (!load_and_activate_topic_tool(tool, active, error_out)) {
+      return false;
+    }
+    active_topic_tools_[tool.input_topic] = active;
+  }
+
+  return true;
+}
+
+bool DispatcherControllerNode::clear_active_topic_tools(std::string & error_out)
+{
+  for (const auto & entry : active_topic_tools_) {
+    std::string local_error;
+    if (!deactivate_and_unload_tool(entry.second, local_error)) {
+      error_out = local_error;
+      return false;
+    }
+  }
+  active_topic_tools_.clear();
+  return true;
+}
+
+bool DispatcherControllerNode::load_and_activate_topic_tool(
+  const ResolvedTopicTool & tool, ActiveTopicTool & out, std::string & error_out)
+{
+  if (!load_node_client_->wait_for_service(service_timeout_)) {
+    error_out = "load_node service not available for component container";
+    return false;
+  }
+
+  auto request = std::make_shared<composition_interfaces::srv::LoadNode::Request>();
+  request->package_name = tool.package_name;
+  request->plugin_name = tool.plugin_name;
+  request->node_name = tool.node_name;
+  request->node_namespace = this->get_namespace();
+  for (const auto & param : tool.parameters) {
+    request->parameters.push_back(param.to_parameter_msg());
+  }
+
+  auto future = load_node_client_->async_send_request(request);
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout loading topic_tools component";
+    return false;
+  }
+  auto response = future.get();
+  if (!response->success) {
+    error_out = "Failed to load topic_tools component " + tool.node_name;
+    return false;
+  }
+
+  ActiveTopicTool active;
+  active.unique_id = response->unique_id;
+  active.full_node_name = response->full_node_name;
+  active.config = tool;
+
+  if (!change_lifecycle_state(
+      active.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE,
+      "configure topic_tools", error_out))
+  {
+    deactivate_and_unload_tool(active, error_out);
+    return false;
+  }
+
+  if (!change_lifecycle_state(
+      active.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE,
+      "activate topic_tools", error_out))
+  {
+    deactivate_and_unload_tool(active, error_out);
+    return false;
+  }
+
+  out = active;
+  return true;
+}
+
+bool DispatcherControllerNode::deactivate_and_unload_tool(
+  const ActiveTopicTool & tool, std::string & error_out)
+{
+  auto state = get_lifecycle_state(tool.full_node_name);
+  if (state) {
+    if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+      change_lifecycle_state(
+        tool.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE,
+        "deactivate topic_tools", error_out);
+    }
+    change_lifecycle_state(
+      tool.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_CLEANUP,
+      "cleanup topic_tools", error_out);
+  }
+
+  if (!unload_node_client_->wait_for_service(service_timeout_)) {
+    error_out = "unload_node service not available for component container";
+    return false;
+  }
+
+  auto request = std::make_shared<composition_interfaces::srv::UnloadNode::Request>();
+  request->unique_id = tool.unique_id;
+  auto future = unload_node_client_->async_send_request(request);
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout unloading topic_tools component";
+    return false;
+  }
+  auto response = future.get();
+  if (!response->success) {
+    error_out = "Failed to unload topic_tools component";
+    return false;
+  }
+
+  return true;
+}
+
+std::optional<uint8_t> DispatcherControllerNode::get_lifecycle_state(const std::string & node_name)
+{
+  auto client = create_client<lifecycle_msgs::srv::GetState>(
+    node_name + "/get_state", rmw_qos_profile_services_default, client_cb_group_);
+  if (!client->wait_for_service(service_timeout_)) {
+    return std::nullopt;
+  }
+
+  auto request = std::make_shared<lifecycle_msgs::srv::GetState::Request>();
+  auto future = client->async_send_request(request);
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    return std::nullopt;
+  }
+  return future.get()->current_state.id;
+}
+
+bool DispatcherControllerNode::change_lifecycle_state(
+  const std::string & node_name, uint8_t transition_id, const std::string & action,
   std::string & error_out)
+{
+  auto client = create_client<lifecycle_msgs::srv::ChangeState>(
+    node_name + "/change_state", rmw_qos_profile_services_default, client_cb_group_);
+  if (!client->wait_for_service(service_timeout_)) {
+    error_out = action + " service not available";
+    return false;
+  }
+
+  auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
+  request->transition.id = transition_id;
+  auto future = client->async_send_request(request);
+  if (future.wait_for(service_timeout_) != std::future_status::ready) {
+    error_out = "Timeout during " + action;
+    return false;
+  }
+  auto response = future.get();
+  if (!response->success) {
+    error_out = "Lifecycle transition rejected for " + node_name;
+    return false;
+  }
+  return true;
+}
+
+bool DispatcherControllerNode::load_file_selection(
+  const std::string & path, std::vector<TopicSelection> & out, std::string & error_out)
 {
   if (path.empty()) {
     error_out = "selection_file_path is empty";
@@ -584,28 +993,84 @@ bool DispatcherControllerNode::load_file_selection(
 
   out.clear();
   for (const auto & node : root) {
-    introspection_manager_msgs::msg::TopicInfo info;
+    TopicSelection selection;
     if (node["topic_name"]) {
-      info.name = node["topic_name"].as<std::string>();
+      selection.topic.name = node["topic_name"].as<std::string>();
     } else if (node["name"]) {
-      info.name = node["name"].as<std::string>();
+      selection.topic.name = node["name"].as<std::string>();
     }
     if (node["msg_type"]) {
-      info.type = node["msg_type"].as<std::string>();
+      selection.topic.type = node["msg_type"].as<std::string>();
     } else if (node["type"]) {
-      info.type = node["type"].as<std::string>();
+      selection.topic.type = node["type"].as<std::string>();
     }
-    if (info.name.empty()) {
+
+    if (selection.topic.name.empty()) {
       error_out = "Selection file entry missing topic_name";
       return false;
     }
-    out.push_back(info);
+
+    if (node["topic_tools"]) {
+      auto cfg_node = node["topic_tools"];
+      if (!cfg_node.IsMap()) {
+        error_out = "topic_tools must be a map";
+        return false;
+      }
+
+      TopicToolsConfig cfg;
+      cfg.enabled = cfg_node["enabled"] ? cfg_node["enabled"].as<bool>() : true;
+      if (cfg.enabled) {
+        if (cfg_node["package"]) {
+          cfg.package_name = cfg_node["package"].as<std::string>();
+        }
+        if (cfg_node["plugin"]) {
+          cfg.plugin_name = cfg_node["plugin"].as<std::string>();
+        }
+        if (cfg_node["name"]) {
+          cfg.node_name = cfg_node["name"].as<std::string>();
+        }
+        if (cfg_node["output_topic"]) {
+          cfg.output_topic = cfg_node["output_topic"].as<std::string>();
+        }
+        if (cfg_node["output_name"] && cfg.output_topic.empty()) {
+          cfg.output_topic = default_output_topic(
+            selection.topic.name, cfg_node["output_name"].as<std::string>());
+        }
+        if (cfg_node["output_type"]) {
+          cfg.output_type = cfg_node["output_type"].as<std::string>();
+        }
+        if (cfg_node["parameters"]) {
+          auto params = cfg_node["parameters"];
+          if (!params.IsMap()) {
+            error_out = "topic_tools.parameters must be a map";
+            return false;
+          }
+          for (auto it = params.begin(); it != params.end(); ++it) {
+            auto name = it->first.as<std::string>();
+            try {
+              cfg.parameters.push_back(parse_parameter_value(name, it->second, error_out));
+            } catch (const std::exception & ex) {
+              error_out = ex.what();
+              return false;
+            }
+          }
+        }
+
+        if (cfg.plugin_name.empty()) {
+          error_out = "topic_tools.plugin is required";
+          return false;
+        }
+        selection.topic_tools = cfg;
+      }
+    }
+
+    out.push_back(selection);
   }
   return true;
 }
 
 bool DispatcherControllerNode::discover_all_topics(
-  std::vector<introspection_manager_msgs::msg::TopicInfo> & out, std::string & error_out)
+  std::vector<TopicSelection> & out, std::string & error_out)
 {
   if (!introspection_client_->wait_for_service(service_timeout_)) {
     error_out = "Introspection service not available";
@@ -642,7 +1107,9 @@ bool DispatcherControllerNode::discover_all_topics(
     if (!info.name.empty() && info.name[0] == '_') {
       continue;
     }
-    out.push_back(info);
+    TopicSelection selection;
+    selection.topic = info;
+    out.push_back(selection);
   }
 
   if (!ensure_topic_limits(out, error_out)) {
@@ -652,11 +1119,11 @@ bool DispatcherControllerNode::discover_all_topics(
 }
 
 bool DispatcherControllerNode::infer_missing_types(
-  std::vector<introspection_manager_msgs::msg::TopicInfo> & subs, std::string & error_out)
+  std::vector<TopicSelection> & subs, std::string & error_out)
 {
   bool needs_lookup = false;
   for (const auto & sub : subs) {
-    if (sub.type.empty()) {
+    if (sub.topic.type.empty()) {
       needs_lookup = true;
       break;
     }
@@ -680,27 +1147,26 @@ bool DispatcherControllerNode::infer_missing_types(
     topic_types[info.name] = info.type;
   }
 
-  // Collect all missing topics and check which ones cannot be resolved
   std::vector<std::string> missing_topics;
   std::vector<std::string> available_topics;
-  
+
   for (const auto & entry : topic_types) {
     available_topics.push_back(entry.first);
   }
 
   for (auto & sub : subs) {
-    if (sub.type.empty()) {
-      auto it = topic_types.find(sub.name);
+    if (sub.topic.type.empty()) {
+      auto it = topic_types.find(sub.topic.name);
       if (it == topic_types.end() || it->second.empty()) {
-        missing_topics.push_back(sub.name);
+        missing_topics.push_back(sub.topic.name);
         RCLCPP_WARN(
           get_logger(), "Cannot infer type for topic: %s (not found in introspection)",
-          sub.name.c_str());
+          sub.topic.name.c_str());
       } else {
-        sub.type = it->second;
+        sub.topic.type = it->second;
         RCLCPP_DEBUG(
-          get_logger(), "Inferred type for topic %s: %s", sub.name.c_str(),
-          sub.type.c_str());
+          get_logger(), "Inferred type for topic %s: %s", sub.topic.name.c_str(),
+          sub.topic.type.c_str());
       }
     }
   }
@@ -714,7 +1180,7 @@ bool DispatcherControllerNode::infer_missing_types(
     }
     oss << ". Available topics from introspection: " << available_topics.size();
     error_out = oss.str();
-    
+
     RCLCPP_ERROR(get_logger(), "%s", error_out.c_str());
     if (!available_topics.empty() && available_topics.size() <= 20) {
       std::ostringstream avail;
@@ -738,7 +1204,7 @@ bool DispatcherControllerNode::infer_missing_types(
 }
 
 bool DispatcherControllerNode::ensure_topic_limits(
-  const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs, std::string & error_out) const
+  const std::vector<TopicSelection> & subs, std::string & error_out) const
 {
   if (subs.size() > all_mode_max_topics_) {
     std::ostringstream oss;
@@ -748,6 +1214,17 @@ bool DispatcherControllerNode::ensure_topic_limits(
     return false;
   }
   return true;
+}
+
+std::vector<introspection_manager_msgs::msg::TopicInfo> DispatcherControllerNode::to_topic_info(
+  const std::vector<TopicSelection> & topics) const
+{
+  std::vector<introspection_manager_msgs::msg::TopicInfo> out;
+  out.reserve(topics.size());
+  for (const auto & topic : topics) {
+    out.push_back(topic.topic);
+  }
+  return out;
 }
 
 bool DispatcherControllerNode::set_introspection_enabled(bool enabled, std::string & error_out)

@@ -10,3 +10,4 @@
     introspection_service_name: /introspection_manager/get_topics
     all_mode_max_topics: 200
     all_mode_hide_rosout: true
+    component_container_name: /ros2_kafka_dispatcher_container

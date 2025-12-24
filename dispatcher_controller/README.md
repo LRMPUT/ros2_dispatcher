@@ -19,6 +19,7 @@ source install/setup.bash
 - `introspection_service_name` (string, default `/introspection_manager/get_topics`): Service used for topic validation/discovery.
 - `disable_introspection_after_apply` (bool, default `true`): Optionally disable introspection after applying a selection.
 - `all_mode_max_topics` (int, default `200`): Safety limit for `all` mode discovery.
+- `component_container_name` (string, default `/ros2_kafka_dispatcher_container`): Component container used to load topic_tools processors.
 
 ## Services
 
@@ -56,6 +57,30 @@ The controller infers missing topic message types in two scenarios:
 **With full `msg_type` in YAML**: No introspection dependency; types are read directly from the file.
 
 **Without `msg_type` in YAML**: Requires `introspection_manager` running and reachable at the configured `introspection_service_name`.
+
+### Using topic_tools with selections
+
+You can optionally insert `topic_tools` processors (e.g., throttle) between the source topic and the Kafka sink without changing the sink configuration. Provide a `topic_tools` map per entry in your selection YAML:
+
+```yaml
+- topic_name: /cmd_vel
+  msg_type: geometry_msgs/msg/Twist
+  topic_tools:
+    package: topic_tools
+    plugin: topic_tools::ThrottleNode
+    name: cmd_vel_throttle           # optional, auto-generated if omitted
+    output_topic: /throttle/cmd_vel  # optional, defaults to /<name>/<topic_name>
+    parameters:
+      period: 0.1
+```
+
+When `topic_tools` is present and enabled, the controller will:
+
+1. Load the component into `component_container_name`.
+2. Configure and activate it via lifecycle transitions.
+3. Subscribe the Kafka sink to the tool's `output_topic` instead of the original `topic_name`.
+
+Set `topic_tools.enabled: false` to leave a configuration stub in the YAML without activating it.
 
 ## Usage examples
 

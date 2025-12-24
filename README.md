@@ -6,7 +6,7 @@
 
 ## Architecture / Key Components
 - **introspection_manager** (`introspection_manager/`): Monitors the ROS 2 graph and exposes topic/type listings via the `~/topics_info` publisher and `~/get_topics` service. Configurable defaults in `introspection_manager/config/introspection_manager.param.yaml`. Launch file: `introspection_manager/launch/introspection_manager.launch.py`.
-- **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka sink lifecycle. Supports selection modes `gui` | `file` | `all`, validates topics (optional), and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
+- **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka sink lifecycle. Supports selection modes `gui` | `file` | `all`, validates topics (optional), orchestrates optional `topic_tools` processors per topic, and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
 - **kafka_sink** (`kafka_bridge/kafka_sink/`): Lifecycle node that subscribes to configured topics and forwards payloads to Kafka using `kafka_client`. Parameters (e.g., `subscriptions_yaml`, `kafka.bootstrap_servers`, QoS depth) are defined in `kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`. Launch file: `kafka_bridge/kafka_sink/launch/kafka_sink_container.launch.py`.
 - **ros2_kafka_dispatcher_bringup** (`ros2_kafka_dispatcher_bringup/`): Launches the dispatcher controller, Kafka sink, and introspection manager together. Minimal setup in `ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`; composed setup in `ros2_kafka_dispatcher_bringup/launch/system_composed.launch.py`.
 - **processing_plugins/** (`processing_plugins/`): Contains placeholder plugin packages (`gps_velocity_estimator`, `moving_average_filter`) without documented behavior in this repository.
@@ -54,7 +54,7 @@
 
 ## Configuration
 - **Dispatcher controller parameters** (declare defaults in `dispatcher_controller/src/dispatcher_controller_node.cpp`):
-  - `selection_mode` (`gui`|`file`|`all`), `selection_file_path`, `auto_apply_on_mode_change`, `validate_topics`, `kafka_sink_node_name`, `introspection_service_name`, `introspection_node_name`, `disable_introspection_after_apply`, `all_mode_max_topics`, `all_mode_allowlist`, `all_mode_denylist`, `all_mode_hide_rosout`.
+  - `selection_mode` (`gui`|`file`|`all`), `selection_file_path`, `auto_apply_on_mode_change`, `validate_topics`, `kafka_sink_node_name`, `introspection_service_name`, `introspection_node_name`, `disable_introspection_after_apply`, `all_mode_max_topics`, `all_mode_allowlist`, `all_mode_denylist`, `all_mode_hide_rosout`, `component_container_name`.
   - Services exposed: `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, `set_selection_mode`.
 - **Kafka sink parameters** (`kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`):
   - Subscription/QoS: `qos_depth`, `subscriptions_yaml`.
