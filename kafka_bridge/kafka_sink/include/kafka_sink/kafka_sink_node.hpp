@@ -16,6 +16,7 @@
 #define KAFKA_SINK__KAFKA_SINK_NODE_HPP_
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,6 +27,7 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "kafka_sink/visibility_control.hpp"
 
 namespace kafka_sink
@@ -74,6 +76,7 @@ private:
     bool drop_when_full{true};
     std::optional<int> linger_ms;
     std::optional<int> batch_size;
+    std::optional<int> stats_interval_ms;
   };
 
   struct SubscriptionRuntime
@@ -86,6 +89,13 @@ private:
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};
     std::atomic<uint64_t> errors{0};
+    std::atomic<uint64_t> bytes_sent{0};
+    std::atomic<uint64_t> queue_full{0};
+    std::atomic<int64_t> last_copy_send_ns{0};
+    std::array<std::atomic<uint64_t>, 7> latency_buckets{
+      std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
+      std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
+      std::atomic<uint64_t>{0}};
   };
 
   struct ActiveSubscription
@@ -116,17 +126,23 @@ private:
   std::string map_kafka_topic(const std::string & ros_topic) const;
   kafka_client::KafkaProducerConfig build_producer_config() const;
   rclcpp::QoS build_qos_profile() const;
+  void configure_metrics_timer();
+  void publish_metrics();
 
   std::vector<SubscriptionConfig> configured_subscriptions_;
   std::vector<ActiveSubscription> active_subscriptions_;
   KafkaParameters kafka_parameters_;
   std::shared_ptr<kafka_client::KafkaProducer> kafka_producer_;
+  rclcpp::TimerBase::SharedPtr metrics_timer_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr metrics_publisher_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
     on_parameters_set_handle_;
 
   std::atomic_bool is_active_{false};
   int qos_depth_{10};
+  int metrics_interval_ms_{0};
+  std::string metrics_topic_;
 };
 }  // namespace kafka_sink
 
