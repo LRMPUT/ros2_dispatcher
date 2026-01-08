@@ -16,7 +16,9 @@
 #define KAFKA_SINK__KAFKA_SINK_NODE_HPP_
 
 #include <atomic>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -26,6 +28,7 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "rosidl_runtime_c/message_type_support_struct.h"
 #include "kafka_sink/visibility_control.hpp"
 
@@ -98,6 +101,31 @@ private:
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};
     std::atomic<uint64_t> errors{0};
+
+    // Metrics
+    std::atomic<uint64_t> msgs_total{0};
+    std::atomic<uint64_t> bytes_total{0};
+    std::atomic<uint64_t> serialize_time_ns_accum{0};
+    std::atomic<uint64_t> send_time_ns_accum{0};
+    std::atomic<uint64_t> serialize_time_ns_max{0};
+    std::atomic<uint64_t> send_time_ns_max{0};
+    std::atomic<uint64_t> msg_size_min{UINT64_MAX};
+    std::atomic<uint64_t> msg_size_max{0};
+
+    // Latency sample buffers for percentile calculation (protected by mutex)
+    std::mutex latency_mutex;
+    std::deque<uint64_t> serialize_samples;
+    std::deque<uint64_t> send_samples;
+    static constexpr size_t kMaxSamples = 1000;
+
+    // Snapshot values used by periodic metrics reporting
+    uint64_t prev_msgs_total{0};
+    uint64_t prev_sent_ok{0};
+    uint64_t prev_dropped{0};
+    uint64_t prev_errors{0};
+    uint64_t prev_bytes_total{0};
+    uint64_t prev_serialize_time_ns_accum{0};
+    uint64_t prev_send_time_ns_accum{0};
   };
 
   struct ActiveSubscription
@@ -129,6 +157,9 @@ private:
   kafka_client::KafkaProducerConfig build_producer_config() const;
   rclcpp::QoS build_qos_profile() const;
 
+  // Metrics handling
+  void publish_metrics();
+
   std::vector<SubscriptionConfig> configured_subscriptions_;
   std::vector<ActiveSubscription> active_subscriptions_;
   KafkaParameters kafka_parameters_;
@@ -139,6 +170,13 @@ private:
 
   std::atomic_bool is_active_{false};
   int qos_depth_{10};
+
+  // Metrics configuration/state
+  bool metrics_enabled_{false};
+  int metrics_interval_ms_{1000};
+  std::string metrics_topic_{"kafka_sink/metrics"};
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr metrics_pub_;
+  rclcpp::TimerBase::SharedPtr metrics_timer_;
 };
 }  // namespace kafka_sink
 

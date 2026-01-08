@@ -45,6 +45,17 @@ namespace
 {
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;  // 1 second
 
+// Calculate percentile from sorted samples
+uint64_t calculate_percentile(std::vector<uint64_t> samples, double percentile)
+{
+  if (samples.empty()) {
+    return 0;
+  }
+  std::sort(samples.begin(), samples.end());
+  const size_t index = static_cast<size_t>(percentile * static_cast<double>(samples.size() - 1));
+  return samples[index];
+}
+
 size_t member_element_size(const rosidl_typesupport_introspection_cpp::MessageMember & member)
 {
   switch (member.type_id_) {
@@ -352,6 +363,10 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
 {
   this->declare_parameter<std::string>("subscriptions_yaml", "");
   this->declare_parameter<int>("qos_depth", qos_depth_);
+  // Metrics parameters
+  this->declare_parameter<bool>("metrics.enabled", metrics_enabled_);
+  this->declare_parameter<int>("metrics.interval_ms", metrics_interval_ms_);
+  this->declare_parameter<std::string>("metrics.topic", metrics_topic_);
   this->declare_parameter<std::string>(
     "kafka.bootstrap_servers", kafka_parameters_.bootstrap_servers);
   this->declare_parameter<std::string>("kafka.client_id", kafka_parameters_.client_id);
@@ -405,6 +420,15 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_activate(const rclcpp_lifecycle:
   }
 
   is_active_.store(true, std::memory_order_release);
+
+  // Setup metrics publisher and timer if enabled
+  if (metrics_enabled_) {
+    metrics_pub_ = this->create_publisher<std_msgs::msg::String>(metrics_topic_, 10);
+    metrics_pub_->on_activate();
+    metrics_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(metrics_interval_ms_),
+      std::bind(&KafkaSinkNode::publish_metrics, this));
+  }
   RCLCPP_INFO(
     get_logger(), "Activated kafka_sink with %zu active subscriptions",
     active_subscriptions_.size());
@@ -417,6 +441,15 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_deactivate(const rclcpp_lifecycl
   clear_subscriptions();
   stop_producer();
 
+   // Stop metrics reporting
+  if (metrics_timer_) {
+    metrics_timer_.reset();
+  }
+  if (metrics_pub_) {
+    metrics_pub_->on_deactivate();
+    metrics_pub_.reset();
+  }
+
   RCLCPP_INFO(get_logger(), "Deactivated kafka_sink and cleared subscriptions");
   return CallbackReturn::SUCCESS;
 }
@@ -427,6 +460,13 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_cleanup(const rclcpp_lifecycle::
   stop_producer();
   clear_subscriptions();
   configured_subscriptions_.clear();
+
+  if (metrics_timer_) {
+    metrics_timer_.reset();
+  }
+  if (metrics_pub_) {
+    metrics_pub_.reset();
+  }
 
   RCLCPP_INFO(get_logger(), "Cleaned up kafka_sink configuration and runtime state");
   return CallbackReturn::SUCCESS;
@@ -455,6 +495,10 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
   int pending_depth = qos_depth_;
   KafkaParameters pending_kafka = kafka_parameters_;
   bool kafka_update_required = false;
+  bool metrics_update_required = false;
+  bool pending_metrics_enabled = metrics_enabled_;
+  int pending_metrics_interval_ms = metrics_interval_ms_;
+  std::string pending_metrics_topic = metrics_topic_;
 
   for (const auto & param : parameters) {
     const auto & name = param.get_name();
@@ -525,6 +569,21 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
           return result;
         }
       }
+    } else if (name.rfind("metrics.", 0) == 0) {
+      const auto & current_state = this->get_current_state();
+      if (current_state.id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+        result.successful = false;
+        result.reason = "deactivate first";
+        return result;
+      }
+      metrics_update_required = true;
+      if (name == "metrics.enabled") {
+        pending_metrics_enabled = param.as_bool();
+      } else if (name == "metrics.interval_ms") {
+        pending_metrics_interval_ms = param.as_int();
+      } else if (name == "metrics.topic") {
+        pending_metrics_topic = param.as_string();
+      }
     }
   }
 
@@ -559,6 +618,12 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
     kafka_parameters_ = pending_kafka;
   }
 
+  if (metrics_update_required) {
+    metrics_enabled_ = pending_metrics_enabled;
+    metrics_interval_ms_ = pending_metrics_interval_ms;
+    metrics_topic_ = pending_metrics_topic;
+  }
+
   return result;
 }
 
@@ -566,6 +631,11 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
 {
   qos_depth_ = this->get_parameter("qos_depth").as_int();
   std::string yaml_config = this->get_parameter("subscriptions_yaml").as_string();
+
+  // Metrics config
+  metrics_enabled_ = this->get_parameter("metrics.enabled").as_bool();
+  metrics_interval_ms_ = this->get_parameter("metrics.interval_ms").as_int();
+  metrics_topic_ = this->get_parameter("metrics.topic").as_string();
 
   std::string qos_error;
   if (!validate_qos_depth(qos_depth_, &qos_error)) {
@@ -795,13 +865,14 @@ bool KafkaSinkNode::build_subscriptions()
         if (!producer) {
           return;
         }
-
+        auto t0 = std::chrono::steady_clock::now();
         const auto now_ns = this->get_clock()->now().nanoseconds();
         auto next_time_ns =
           runtime_state->next_log_time_ns.load(std::memory_order_acquire);
         const auto stamp_ms = now_ns / 1'000'000;
 
         std::vector<uint8_t> value;
+        bool json_path = false;
         if (runtime_state->payload_format == PayloadFormat::JSON) {
           std::string json_payload;
           std::string json_error;
@@ -820,9 +891,45 @@ bool KafkaSinkNode::build_subscriptions()
             return;
           }
           value.assign(json_payload.begin(), json_payload.end());
+          json_path = true;
         } else {
           value.resize(msg->size());
           std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
+        }
+
+        auto t1 = std::chrono::steady_clock::now();
+        auto serialize_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        runtime_state->serialize_time_ns_accum.fetch_add(static_cast<uint64_t>(serialize_ns), std::memory_order_relaxed);
+        // update max serialize time
+        {
+          uint64_t prev = runtime_state->serialize_time_ns_max.load(std::memory_order_relaxed);
+          while (static_cast<uint64_t>(serialize_ns) > prev &&
+                 !runtime_state->serialize_time_ns_max.compare_exchange_weak(prev, static_cast<uint64_t>(serialize_ns), std::memory_order_relaxed)) {
+          }
+        }
+
+        // Track min/max message size
+        const uint64_t msg_size = static_cast<uint64_t>(value.size());
+        {
+          uint64_t prev_min = runtime_state->msg_size_min.load(std::memory_order_relaxed);
+          while (msg_size < prev_min &&
+                 !runtime_state->msg_size_min.compare_exchange_weak(prev_min, msg_size, std::memory_order_relaxed)) {
+          }
+        }
+        {
+          uint64_t prev_max = runtime_state->msg_size_max.load(std::memory_order_relaxed);
+          while (msg_size > prev_max &&
+                 !runtime_state->msg_size_max.compare_exchange_weak(prev_max, msg_size, std::memory_order_relaxed)) {
+          }
+        }
+
+        // Store latency samples for percentile calculation
+        {
+          std::lock_guard<std::mutex> lock(runtime_state->latency_mutex);
+          runtime_state->serialize_samples.push_back(static_cast<uint64_t>(serialize_ns));
+          if (runtime_state->serialize_samples.size() > runtime_state->kMaxSamples) {
+            runtime_state->serialize_samples.pop_front();
+          }
         }
 
         // Echo key and topic name
@@ -844,8 +951,28 @@ bool KafkaSinkNode::build_subscriptions()
           runtime_state->payload_format == PayloadFormat::JSON ? "json" : "cdr"
         });
 
+        runtime_state->msgs_total.fetch_add(1, std::memory_order_relaxed);
+        runtime_state->bytes_total.fetch_add(static_cast<uint64_t>(value.size()), std::memory_order_relaxed);
+
         auto result = producer->send(
           runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);
+        auto t2 = std::chrono::steady_clock::now();
+        auto send_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        runtime_state->send_time_ns_accum.fetch_add(static_cast<uint64_t>(send_ns), std::memory_order_relaxed);
+        {
+          uint64_t prev = runtime_state->send_time_ns_max.load(std::memory_order_relaxed);
+          while (static_cast<uint64_t>(send_ns) > prev &&
+                 !runtime_state->send_time_ns_max.compare_exchange_weak(prev, static_cast<uint64_t>(send_ns), std::memory_order_relaxed)) {
+          }
+        }
+        // Store send latency sample
+        {
+          std::lock_guard<std::mutex> lock(runtime_state->latency_mutex);
+          runtime_state->send_samples.push_back(static_cast<uint64_t>(send_ns));
+          if (runtime_state->send_samples.size() > runtime_state->kMaxSamples) {
+            runtime_state->send_samples.pop_front();
+          }
+        }
         if (result.status == kafka_client::SendStatus::SENT) {
           runtime_state->sent_ok.fetch_add(1, std::memory_order_relaxed);
         } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && !result.buffered) {
@@ -898,6 +1025,137 @@ bool KafkaSinkNode::build_subscriptions()
 void KafkaSinkNode::clear_subscriptions()
 {
   active_subscriptions_.clear();
+}
+
+void KafkaSinkNode::publish_metrics()
+{
+  if (!metrics_enabled_ || !metrics_pub_) {
+    return;
+  }
+
+  nlohmann::json root = nlohmann::json::array();
+  const double interval_sec = static_cast<double>(metrics_interval_ms_) / 1000.0;
+
+  for (auto & sub : active_subscriptions_) {
+    auto & rt = *sub.runtime_state;
+
+    const uint64_t msgs_total = rt.msgs_total.load(std::memory_order_relaxed);
+    const uint64_t sent_ok = rt.sent_ok.load(std::memory_order_relaxed);
+    const uint64_t dropped = rt.dropped.load(std::memory_order_relaxed);
+    const uint64_t errors = rt.errors.load(std::memory_order_relaxed);
+    const uint64_t bytes_total = rt.bytes_total.load(std::memory_order_relaxed);
+    const uint64_t serialize_accum = rt.serialize_time_ns_accum.load(std::memory_order_relaxed);
+    const uint64_t send_accum = rt.send_time_ns_accum.load(std::memory_order_relaxed);
+    const uint64_t msg_size_min = rt.msg_size_min.load(std::memory_order_relaxed);
+    const uint64_t msg_size_max = rt.msg_size_max.load(std::memory_order_relaxed);
+
+    const uint64_t d_msgs = msgs_total - rt.prev_msgs_total;
+    const uint64_t d_sent = sent_ok - rt.prev_sent_ok;
+    const uint64_t d_drop = dropped - rt.prev_dropped;
+    const uint64_t d_err = errors - rt.prev_errors;
+    const uint64_t d_bytes = bytes_total - rt.prev_bytes_total;
+    const uint64_t d_serialize = serialize_accum - rt.prev_serialize_time_ns_accum;
+    const uint64_t d_send = send_accum - rt.prev_send_time_ns_accum;
+
+    rt.prev_msgs_total = msgs_total;
+    rt.prev_sent_ok = sent_ok;
+    rt.prev_dropped = dropped;
+    rt.prev_errors = errors;
+    rt.prev_bytes_total = bytes_total;
+    rt.prev_serialize_time_ns_accum = serialize_accum;
+    rt.prev_send_time_ns_accum = send_accum;
+
+    const double recv_rate = interval_sec > 0.0 ? static_cast<double>(d_msgs) / interval_sec : 0.0;
+    const double sent_rate = interval_sec > 0.0 ? static_cast<double>(d_sent) / interval_sec : 0.0;
+
+    const uint64_t avg_serialize_ns = d_msgs > 0 ? (d_serialize / d_msgs) : 0ULL;
+    const uint64_t avg_send_ns = d_msgs > 0 ? (d_send / d_msgs) : 0ULL;
+
+    // Calculate percentiles from samples
+    std::vector<uint64_t> serialize_samples_copy;
+    std::vector<uint64_t> send_samples_copy;
+    {
+      std::lock_guard<std::mutex> lock(rt.latency_mutex);
+      serialize_samples_copy.assign(rt.serialize_samples.begin(), rt.serialize_samples.end());
+      send_samples_copy.assign(rt.send_samples.begin(), rt.send_samples.end());
+    }
+
+    const uint64_t serialize_p95 = calculate_percentile(serialize_samples_copy, 0.95);
+    const uint64_t serialize_p99 = calculate_percentile(serialize_samples_copy, 0.99);
+    const uint64_t send_p95 = calculate_percentile(send_samples_copy, 0.95);
+    const uint64_t send_p99 = calculate_percentile(send_samples_copy, 0.99);
+
+    // Calculate derived metrics
+    const double avg_msg_size_bytes = msgs_total > 0 ? 
+      static_cast<double>(bytes_total) / static_cast<double>(msgs_total) : 0.0;
+    
+    // Serialization throughput in MB/s
+    const double serialize_throughput_mbps = d_serialize > 0 ?
+      (static_cast<double>(d_bytes) / (static_cast<double>(d_serialize) / 1e9)) / 1048576.0 : 0.0;
+    
+    // Send throughput in MB/s
+    const double send_throughput_mbps = d_send > 0 ?
+      (static_cast<double>(d_bytes) / (static_cast<double>(d_send) / 1e9)) / 1048576.0 : 0.0;
+    
+    // CPU efficiency: nanoseconds per byte
+    const double cpu_ns_per_byte = bytes_total > 0 ?
+      static_cast<double>(serialize_accum) / static_cast<double>(bytes_total) : 0.0;
+
+    nlohmann::json entry = {
+      {"ros_topic", rt.ros_topic},
+      {"kafka_topic", rt.kafka_topic},
+      {"msg_type", rt.msg_type},
+      {"payload_format", rt.payload_format == PayloadFormat::JSON ? "json" : "cdr"},
+      {"interval_ms", metrics_interval_ms_},
+      {"delta", {
+        {"received", d_msgs},
+        {"sent_ok", d_sent},
+        {"dropped", d_drop},
+        {"errors", d_err},
+        {"bytes", d_bytes}
+      }},
+      {"rates", {
+        {"received_per_sec", recv_rate},
+        {"sent_per_sec", sent_rate}
+      }},
+      {"message_size", {
+        {"avg_bytes", avg_msg_size_bytes},
+        {"min_bytes", msg_size_min == UINT64_MAX ? 0 : msg_size_min},
+        {"max_bytes", msg_size_max}
+      }},
+      {"latency_ns", {
+        {"serialize_avg", avg_serialize_ns},
+        {"serialize_p95", serialize_p95},
+        {"serialize_p99", serialize_p99},
+        {"serialize_max", rt.serialize_time_ns_max.load(std::memory_order_relaxed)},
+        {"send_avg", avg_send_ns},
+        {"send_p95", send_p95},
+        {"send_p99", send_p99},
+        {"send_max", rt.send_time_ns_max.load(std::memory_order_relaxed)}
+      }},
+      {"throughput", {
+        {"serialize_mb_per_sec", serialize_throughput_mbps},
+        {"send_mb_per_sec", send_throughput_mbps}
+      }},
+      {"cpu_efficiency", {
+        {"ns_per_byte", cpu_ns_per_byte},
+        {"bytes_per_cpu_ms", cpu_ns_per_byte > 0 ? 1000000.0 / cpu_ns_per_byte : 0.0}
+      }},
+      {"totals", {
+        {"received", msgs_total},
+        {"sent_ok", sent_ok},
+        {"dropped", dropped},
+        {"errors", errors},
+        {"bytes", bytes_total}
+      }}
+    };
+
+    root.push_back(entry);
+  }
+
+  std_msgs::msg::String msg;
+  msg.data = root.dump();
+  metrics_pub_->publish(msg);
 }
 
 }  // namespace kafka_sink
