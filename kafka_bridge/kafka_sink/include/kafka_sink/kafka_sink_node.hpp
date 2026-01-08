@@ -66,6 +66,7 @@ private:
     std::string client_id{"kafka_sink"};
     std::string acks{"all"};
     std::string topic_prefix{"ros2"};
+    std::string message_key{"robot"};
     TopicMappingMode topic_mapping_mode{TopicMappingMode::PREFIX_ROS_TOPIC};
     std::string fixed_topic{"ros2.raw"};
     bool strict_startup{false};
