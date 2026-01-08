@@ -4,6 +4,7 @@
     subscriptions_yaml: |
       - topic_name: /demo/chatter
         msg_type: std_msgs/msg/String
+        kafka_name: chatter_json
       - topic_name: /demo/number
         msg_type: std_msgs/msg/Int32
     kafka.bootstrap_servers: "localhost:9092"
@@ -17,3 +18,4 @@
     kafka.drop_when_full: true
     kafka.linger_ms: 5
     kafka.batch_size: 65536
+    kafka.payload_format: "cdr"

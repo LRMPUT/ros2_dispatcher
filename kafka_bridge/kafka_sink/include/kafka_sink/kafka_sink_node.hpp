@@ -26,6 +26,7 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "rosidl_runtime_c/message_type_support_struct.h"
 #include "kafka_sink/visibility_control.hpp"
 
 namespace kafka_sink
@@ -35,6 +36,7 @@ struct SubscriptionConfig
 {
   std::string topic_name;
   std::string msg_type;
+  std::optional<std::string> kafka_name;
 };
 
 std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yaml_text);
@@ -60,6 +62,12 @@ private:
     FIXED
   };
 
+  enum class PayloadFormat
+  {
+    CDR,
+    JSON
+  };
+
   struct KafkaParameters
   {
     std::string bootstrap_servers{"localhost:9092"};
@@ -74,6 +82,7 @@ private:
     bool drop_when_full{true};
     std::optional<int> linger_ms;
     std::optional<int> batch_size;
+    PayloadFormat payload_format{PayloadFormat::CDR};
   };
 
   struct SubscriptionRuntime
@@ -82,6 +91,9 @@ private:
     std::string ros_topic;
     std::string msg_type;
     std::string kafka_topic;
+    PayloadFormat payload_format{PayloadFormat::CDR};
+    const rosidl_message_type_support_t * rmw_type_support{nullptr};
+    const rosidl_message_type_support_t * introspection_type_support{nullptr};
     std::atomic<int64_t> next_log_time_ns{0};
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};

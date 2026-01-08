@@ -43,9 +43,12 @@ ros2 lifecycle set /kafka_sink deactivate
   ```yaml
   - topic_name: /demo/chatter
     msg_type: std_msgs/msg/String
+    kafka_name: chatter_json
   - topic_name: /demo/number
     msg_type: std_msgs/msg/Int32
   ```
+  - `kafka_name` (string, optional): override the Kafka topic mapping input name for this
+    subscription (defaults to `topic_name`).
 - `qos_depth` (int, default 10): Depth for the QoS profile (KeepLast).
 - Kafka producer parameters (modifiable only while inactive):
   - `kafka.bootstrap_servers` (string, default `localhost:9092`)
@@ -58,6 +61,7 @@ ros2 lifecycle set /kafka_sink deactivate
   - `kafka.max_queue_messages` (int, default `1024`): bounded local retry buffer when Kafka back-pressure occurs.
   - `kafka.drop_when_full` (bool, default `true`): drop instead of buffering when queues are full.
   - `kafka.linger_ms` / `kafka.batch_size` (ints, default `-1` meaning unset): forwarded to librdkafka for batching.
+  - `kafka.payload_format` (string, default `cdr`): `cdr` publishes raw ROS 2 serialized bytes; `json` converts to JSON before sending.
 
 You can update `subscriptions_yaml` while the node is inactive. When the node is active the update
 is rejected with the message `deactivate first`. The same rule applies to the `kafka.*` parameters.
@@ -72,8 +76,9 @@ ros2 param set /kafka_sink subscriptions_yaml "[{'topic_name': '/foo', 'msg_type
 
 - Subscriptions are created on activation and destroyed on deactivation/cleanup/shutdown. Kafka
   producer startup and shutdown follow the same lifecycle transitions.
-- For every message, `kafka_sink` sends the serialized payload directly to Kafka with headers for
-  `ros_topic`, `ros_type`, and `stamp_ms` (node clock). The Kafka topic is derived from the ROS
-  topic according to the configured mapping rules.
+- For every message, `kafka_sink` sends either the raw serialized CDR payload or a JSON
+  representation (controlled by `kafka.payload_format`) to Kafka with headers for `ros_topic`,
+  `ros_type`, `kafka_topic`, `msg_type`, `stamp_ms`, and `payload_format`. The Kafka topic is
+  derived from the ROS topic according to the configured mapping rules.
 - Each received serialized message is logged at most once per second per topic with topic name,
   byte size, and aggregate send statistics (sent/queued drops/errors).

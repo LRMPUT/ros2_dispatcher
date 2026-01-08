@@ -16,15 +16,26 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <codecvt>
 #include <cstring>
 #include <functional>
+#include <locale>
 #include <stdexcept>
 #include <utility>
 
 #include "lifecycle_msgs/msg/state.hpp"
+#include "nlohmann/json.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
+#include "rclcpp/typesupport_helpers.hpp"
+#include "rmw/rmw.h"
+#include "rmw/serialized_message.h"
+#include "rosidl_typesupport_cpp/identifier.hpp"
+#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+#include "rosidl_typesupport_introspection_cpp/identifier.hpp"
+#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace kafka_sink
@@ -32,6 +43,203 @@ namespace kafka_sink
 namespace
 {
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;  // 1 second
+
+size_t member_element_size(const rosidl_typesupport_introspection_cpp::MessageMember & member)
+{
+  switch (member.type_id_) {
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOLEAN:
+      return sizeof(bool);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:
+      return sizeof(char);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_OCTET:
+      return sizeof(uint8_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
+      return sizeof(uint8_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
+      return sizeof(int8_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
+      return sizeof(uint16_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
+      return sizeof(int16_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
+      return sizeof(uint32_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
+      return sizeof(int32_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
+      return sizeof(uint64_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
+      return sizeof(int64_t);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT:
+      return sizeof(float);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_DOUBLE:
+      return sizeof(double);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
+      return sizeof(std::string);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
+      return sizeof(std::u16string);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+      const auto * members =
+        static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+        member.members_->data);
+      return members ? members->size_of_ : 0U;
+    }
+    default:
+      return 0U;
+  }
+}
+
+nlohmann::json build_json_value(
+  const rosidl_typesupport_introspection_cpp::MessageMember & member,
+  const void * value_ptr);
+
+nlohmann::json build_json_message(
+  const rosidl_typesupport_introspection_cpp::MessageMembers & members,
+  const void * message_ptr)
+{
+  nlohmann::json output = nlohmann::json::object();
+  for (size_t index = 0; index < members.member_count_; ++index) {
+    const auto & member = members.members_[index];
+    const uint8_t * field_ptr = static_cast<const uint8_t *>(message_ptr) + member.offset_;
+    output[member.name_] = build_json_value(member, field_ptr);
+  }
+  return output;
+}
+
+nlohmann::json build_json_scalar(
+  const rosidl_typesupport_introspection_cpp::MessageMember & member,
+  const void * value_ptr)
+{
+  if (!value_ptr) {
+    return nullptr;
+  }
+
+  switch (member.type_id_) {
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOLEAN:
+      return *static_cast<const bool *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:
+      return static_cast<int32_t>(*static_cast<const char *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_OCTET:
+      return static_cast<uint32_t>(*static_cast<const uint8_t *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
+      return static_cast<uint32_t>(*static_cast<const uint8_t *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
+      return static_cast<int32_t>(*static_cast<const int8_t *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
+      return static_cast<uint32_t>(*static_cast<const uint16_t *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
+      return static_cast<int32_t>(*static_cast<const int16_t *>(value_ptr));
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
+      return *static_cast<const uint32_t *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
+      return *static_cast<const int32_t *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
+      return *static_cast<const uint64_t *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
+      return *static_cast<const int64_t *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT: {
+      const float value = *static_cast<const float *>(value_ptr);
+      return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
+    }
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_DOUBLE: {
+      const double value = *static_cast<const double *>(value_ptr);
+      return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
+    }
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
+      return *static_cast<const std::string *>(value_ptr);
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING: {
+      const auto & value = *static_cast<const std::u16string *>(value_ptr);
+      std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
+      return converter.to_bytes(value);
+    }
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+      const auto * members =
+        static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+        member.members_->data);
+      return members ? build_json_message(*members, value_ptr) : nlohmann::json(nullptr);
+    }
+    default:
+      return nullptr;
+  }
+}
+
+nlohmann::json build_json_array(
+  const rosidl_typesupport_introspection_cpp::MessageMember & member,
+  const void * array_ptr)
+{
+  nlohmann::json output = nlohmann::json::array();
+  const size_t size = member.array_size_ ?
+    member.array_size_ :
+    (member.size_function ? member.size_function(array_ptr) : 0U);
+  const size_t element_size = member_element_size(member);
+  for (size_t index = 0; index < size; ++index) {
+    const void * element_ptr = nullptr;
+    if (member.get_const_function) {
+      element_ptr = member.get_const_function(array_ptr, index);
+    } else if (element_size > 0) {
+      element_ptr = static_cast<const uint8_t *>(array_ptr) + (index * element_size);
+    }
+    output.push_back(build_json_scalar(member, element_ptr));
+  }
+  return output;
+}
+
+nlohmann::json build_json_value(
+  const rosidl_typesupport_introspection_cpp::MessageMember & member,
+  const void * value_ptr)
+{
+  if (member.is_array_) {
+    return build_json_array(member, value_ptr);
+  }
+  return build_json_scalar(member, value_ptr);
+}
+
+bool serialize_message_to_json(
+  const rclcpp::SerializedMessage & serialized,
+  const rosidl_message_type_support_t * rmw_type_support,
+  const rosidl_message_type_support_t * introspection_type_support,
+  std::string * output,
+  std::string * error_message)
+{
+  if (!rmw_type_support || !introspection_type_support) {
+    if (error_message) {
+      *error_message = "Missing type support for JSON serialization.";
+    }
+    return false;
+  }
+
+  const auto * members =
+    static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+    introspection_type_support->data);
+  if (!members || !members->create_message || !members->destroy_message) {
+    if (error_message) {
+      *error_message = "Introspection metadata unavailable.";
+    }
+    return false;
+  }
+
+  void * message = members->create_message();
+  if (!message) {
+    if (error_message) {
+      *error_message = "Failed to allocate message for JSON serialization.";
+    }
+    return false;
+  }
+
+  const rmw_serialized_message_t & rmw_serialized =
+    serialized.get_rcl_serialized_message();
+  if (rmw_deserialize(&rmw_serialized, rmw_type_support, message) != RMW_RET_OK) {
+    members->destroy_message(message);
+    if (error_message) {
+      *error_message = "Failed to deserialize message for JSON serialization.";
+    }
+    return false;
+  }
+
+  nlohmann::json payload = build_json_message(*members, message);
+  *output = payload.dump();
+  members->destroy_message(message);
+  return true;
+}
 }  // namespace
 
 KafkaSinkNode::ActiveSubscription::ActiveSubscription(ActiveSubscription && other) noexcept
@@ -85,6 +293,10 @@ std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yam
 
     auto topic_name = topic_node.as<std::string>();
     auto msg_type = msg_type_node.as<std::string>();
+    std::optional<std::string> kafka_name;
+    if (auto kafka_name_node = entry["kafka_name"]) {
+      kafka_name = kafka_name_node.as<std::string>();
+    }
 
     topic_name.erase(
       topic_name.begin(),
@@ -112,7 +324,23 @@ std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yam
       throw std::runtime_error("Subscription entries must have non-empty topic_name and msg_type.");
     }
 
-    configs.push_back({topic_name, msg_type});
+    if (kafka_name) {
+      kafka_name->erase(
+        kafka_name->begin(),
+        std::find_if(kafka_name->begin(), kafka_name->end(), [](unsigned char ch) {
+          return !std::isspace(static_cast<int>(ch));
+        }));
+      kafka_name->erase(
+        std::find_if(kafka_name->rbegin(), kafka_name->rend(), [](unsigned char ch) {
+          return !std::isspace(static_cast<int>(ch));
+        }).base(),
+        kafka_name->end());
+      if (kafka_name->empty()) {
+        kafka_name.reset();
+      }
+    }
+
+    configs.push_back({topic_name, msg_type, kafka_name});
   }
 
   return configs;
@@ -137,6 +365,7 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<bool>("kafka.drop_when_full", kafka_parameters_.drop_when_full);
   this->declare_parameter<int>("kafka.linger_ms", -1);
   this->declare_parameter<int>("kafka.batch_size", -1);
+  this->declare_parameter<std::string>("kafka.payload_format", "cdr");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&KafkaSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -283,6 +512,17 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       } else if (name == "kafka.batch_size") {
         int value = param.as_int();
         pending_kafka.batch_size = value >= 0 ? std::optional<int>{value} : std::nullopt;
+      } else if (name == "kafka.payload_format") {
+        auto format_value = param.as_string();
+        if (format_value == "cdr") {
+          pending_kafka.payload_format = PayloadFormat::CDR;
+        } else if (format_value == "json") {
+          pending_kafka.payload_format = PayloadFormat::JSON;
+        } else {
+          result.successful = false;
+          result.reason = "invalid kafka.payload_format";
+          return result;
+        }
       }
     }
   }
@@ -412,6 +652,15 @@ bool KafkaSinkNode::configure_kafka_parameters(std::string * error_message)
   pending.linger_ms = linger_value >= 0 ? std::optional<int>{linger_value} : std::nullopt;
   int batch_value = this->get_parameter("kafka.batch_size").as_int();
   pending.batch_size = batch_value >= 0 ? std::optional<int>{batch_value} : std::nullopt;
+  auto payload_format = this->get_parameter("kafka.payload_format").as_string();
+  if (payload_format == "cdr") {
+    pending.payload_format = PayloadFormat::CDR;
+  } else if (payload_format == "json") {
+    pending.payload_format = PayloadFormat::JSON;
+  } else {
+    *error_message = "Invalid kafka.payload_format value.";
+    return false;
+  }
 
   if (!validate_kafka_parameters(pending, error_message)) {
     return false;
@@ -516,7 +765,36 @@ bool KafkaSinkNode::build_subscriptions()
     runtime.runtime_state = std::make_shared<SubscriptionRuntime>();
     runtime.runtime_state->ros_topic = config.topic_name;
     runtime.runtime_state->msg_type = config.msg_type;
-    runtime.runtime_state->kafka_topic = map_kafka_topic(config.topic_name);
+    const std::string & kafka_topic_name =
+      config.kafka_name ? *config.kafka_name : config.topic_name;
+    runtime.runtime_state->kafka_topic = map_kafka_topic(kafka_topic_name);
+    runtime.runtime_state->payload_format = kafka_parameters_.payload_format;
+    if (kafka_parameters_.payload_format == PayloadFormat::JSON) {
+      try {
+        runtime.runtime_state->rmw_type_support = rclcpp::get_message_typesupport_handle(
+          config.msg_type, rosidl_typesupport_cpp::typesupport_identifier);
+        runtime.runtime_state->introspection_type_support =
+          rclcpp::get_message_typesupport_handle(
+          config.msg_type, rosidl_typesupport_introspection_cpp::typesupport_identifier);
+      } catch (const std::exception & ex) {
+        RCLCPP_ERROR(
+          get_logger(), "Failed to load type support for '%s': %s",
+          config.msg_type.c_str(), ex.what());
+        active_subscriptions_.pop_back();
+        clear_subscriptions();
+        return false;
+      }
+      if (!runtime.runtime_state->rmw_type_support ||
+        !runtime.runtime_state->introspection_type_support)
+      {
+        RCLCPP_ERROR(
+          get_logger(), "Missing type support for '%s' (json serialization).",
+          config.msg_type.c_str());
+        active_subscriptions_.pop_back();
+        clear_subscriptions();
+        return false;
+      }
+    }
     runtime.runtime_state->log_label =
       "topic='" + config.topic_name + "' kafka_topic='" + runtime.runtime_state->kafka_topic +
       "' type='" + config.msg_type + "'";
@@ -537,8 +815,29 @@ bool KafkaSinkNode::build_subscriptions()
           runtime_state->next_log_time_ns.load(std::memory_order_acquire);
         const auto stamp_ms = now_ns / 1'000'000;
 
-        std::vector<uint8_t> value(msg->size());
-        std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
+        std::vector<uint8_t> value;
+        if (runtime_state->payload_format == PayloadFormat::JSON) {
+          std::string json_payload;
+          std::string json_error;
+          if (!serialize_message_to_json(
+              *msg,
+              runtime_state->rmw_type_support,
+              runtime_state->introspection_type_support,
+              &json_payload,
+              &json_error))
+          {
+            runtime_state->errors.fetch_add(1, std::memory_order_relaxed);
+            RCLCPP_WARN_THROTTLE(
+              this->get_logger(), *this->get_clock(), 1000,
+              "Failed to serialize message to JSON for %s: %s",
+              runtime_state->log_label.c_str(), json_error.c_str());
+            return;
+          }
+          value.assign(json_payload.begin(), json_payload.end());
+        } else {
+          value.resize(msg->size());
+          std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
+        }
 
         // Echo key and topic name
         std::string key_str(message_key_bytes.begin(), message_key_bytes.end());
@@ -548,10 +847,16 @@ bool KafkaSinkNode::build_subscriptions()
           key_str.c_str(), runtime_state->kafka_topic.c_str());
 
         std::vector<kafka_client::KafkaHeader> headers;
-        headers.reserve(3);
+        headers.reserve(6);
         headers.push_back({"ros_topic", runtime_state->ros_topic});
         headers.push_back({"ros_type", runtime_state->msg_type});
+        headers.push_back({"kafka_topic", runtime_state->kafka_topic});
+        headers.push_back({"msg_type", runtime_state->msg_type});
         headers.push_back({"stamp_ms", std::to_string(stamp_ms)});
+        headers.push_back({
+          "payload_format",
+          runtime_state->payload_format == PayloadFormat::JSON ? "json" : "cdr"
+        });
 
         auto result = producer->send(
           runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);

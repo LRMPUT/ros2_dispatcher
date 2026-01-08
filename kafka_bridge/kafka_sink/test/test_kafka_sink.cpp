@@ -23,6 +23,7 @@ TEST(ParseSubscriptions, ValidYamlParses) {
   const std::string yaml_text = R"(
   - topic_name: /foo
     msg_type: std_msgs/msg/String
+    kafka_name: foo_json
   - topic_name: /bar
     msg_type: std_msgs/msg/Int32
   )";
@@ -31,8 +32,11 @@ TEST(ParseSubscriptions, ValidYamlParses) {
   ASSERT_EQ(result.size(), 2u);
   EXPECT_EQ(result[0].topic_name, "/foo");
   EXPECT_EQ(result[0].msg_type, "std_msgs/msg/String");
+  ASSERT_TRUE(result[0].kafka_name.has_value());
+  EXPECT_EQ(*result[0].kafka_name, "foo_json");
   EXPECT_EQ(result[1].topic_name, "/bar");
   EXPECT_EQ(result[1].msg_type, "std_msgs/msg/Int32");
+  EXPECT_FALSE(result[1].kafka_name.has_value());
 }
 
 TEST(ParseSubscriptions, InvalidYamlThrows) {
