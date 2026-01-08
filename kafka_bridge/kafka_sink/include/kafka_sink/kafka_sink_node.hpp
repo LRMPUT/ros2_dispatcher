@@ -16,6 +16,7 @@
 #define KAFKA_SINK__KAFKA_SINK_NODE_HPP_
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -73,6 +74,7 @@ private:
     bool drop_when_full{true};
     std::optional<int> linger_ms;
     std::optional<int> batch_size;
+    std::optional<int> stats_interval_ms;
   };
 
   struct SubscriptionRuntime
@@ -85,6 +87,12 @@ private:
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};
     std::atomic<uint64_t> errors{0};
+    std::atomic<uint64_t> bytes_sent{0};
+    std::atomic<uint64_t> queue_full{0};
+    std::array<std::atomic<uint64_t>, 7> latency_buckets{
+      std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
+      std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
+      std::atomic<uint64_t>{0}};
   };
 
   struct ActiveSubscription

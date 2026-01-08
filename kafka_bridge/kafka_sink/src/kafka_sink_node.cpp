@@ -15,6 +15,7 @@
 #include "kafka_sink/kafka_sink_node.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -32,6 +33,14 @@ namespace kafka_sink
 namespace
 {
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;  // 1 second
+constexpr std::array<int64_t, 7> kLatencyBucketBoundsNs = {
+  1'000'000LL,   // 1 ms
+  5'000'000LL,   // 5 ms
+  10'000'000LL,  // 10 ms
+  50'000'000LL,  // 50 ms
+  100'000'000LL, // 100 ms
+  500'000'000LL, // 500 ms
+  1'000'000'000LL};  // 1 s
 }  // namespace
 
 KafkaSinkNode::ActiveSubscription::ActiveSubscription(ActiveSubscription && other) noexcept
@@ -136,6 +145,7 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<bool>("kafka.drop_when_full", kafka_parameters_.drop_when_full);
   this->declare_parameter<int>("kafka.linger_ms", -1);
   this->declare_parameter<int>("kafka.batch_size", -1);
+  this->declare_parameter<int>("kafka.stats_interval_ms", -1);
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&KafkaSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -280,6 +290,9 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       } else if (name == "kafka.batch_size") {
         int value = param.as_int();
         pending_kafka.batch_size = value >= 0 ? std::optional<int>{value} : std::nullopt;
+      } else if (name == "kafka.stats_interval_ms") {
+        int value = param.as_int();
+        pending_kafka.stats_interval_ms = value >= 0 ? std::optional<int>{value} : std::nullopt;
       }
     }
   }
@@ -404,6 +417,8 @@ bool KafkaSinkNode::configure_kafka_parameters(std::string * error_message)
   pending.linger_ms = linger_value >= 0 ? std::optional<int>{linger_value} : std::nullopt;
   int batch_value = this->get_parameter("kafka.batch_size").as_int();
   pending.batch_size = batch_value >= 0 ? std::optional<int>{batch_value} : std::nullopt;
+  int stats_value = this->get_parameter("kafka.stats_interval_ms").as_int();
+  pending.stats_interval_ms = stats_value >= 0 ? std::optional<int>{stats_value} : std::nullopt;
 
   if (!validate_kafka_parameters(pending, error_message)) {
     return false;
@@ -423,6 +438,7 @@ kafka_client::KafkaProducerConfig KafkaSinkNode::build_producer_config() const
   config.batch_size = kafka_parameters_.batch_size;
   config.max_queue_messages = kafka_parameters_.max_queue_messages;
   config.drop_when_full = kafka_parameters_.drop_when_full;
+  config.stats_interval_ms = kafka_parameters_.stats_interval_ms;
   config.startup_mode = kafka_parameters_.strict_startup ?
     kafka_client::StartupMode::STRICT :
     kafka_client::StartupMode::TOLERANT;
@@ -508,7 +524,8 @@ bool KafkaSinkNode::build_subscriptions()
 
     auto runtime_state = runtime.runtime_state;
     auto callback =
-      [this, runtime_state](std::shared_ptr<rclcpp::SerializedMessage> msg) {
+      [this, runtime_state](
+        std::shared_ptr<rclcpp::SerializedMessage> msg, const rclcpp::MessageInfo & message_info) {
         if (!is_active_.load(std::memory_order_acquire)) {
           return;
         }
@@ -522,20 +539,49 @@ bool KafkaSinkNode::build_subscriptions()
           runtime_state->next_log_time_ns.load(std::memory_order_acquire);
         const auto stamp_ms = now_ns / 1'000'000;
 
+        const auto send_start = std::chrono::steady_clock::now();
         std::vector<uint8_t> value(msg->size());
         std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
 
         std::vector<kafka_client::KafkaHeader> headers;
-        headers.reserve(3);
+        headers.reserve(4);
         headers.push_back({"ros_topic", runtime_state->ros_topic});
         headers.push_back({"ros_type", runtime_state->msg_type});
         headers.push_back({"stamp_ms", std::to_string(stamp_ms)});
 
+        const int64_t publish_stamp_ns = message_info.get_rmw_message_info().source_timestamp;
+        if (publish_stamp_ns > 0) {
+          headers.push_back({"ros_publish_ts_ns", std::to_string(publish_stamp_ns)});
+        }
+
         auto result = producer->send(runtime_state->kafka_topic, {}, value, stamp_ms, headers);
+        const auto send_end = std::chrono::steady_clock::now();
+        const auto copy_send_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          send_end - send_start).count();
+
         if (result.status == kafka_client::SendStatus::SENT) {
           runtime_state->sent_ok.fetch_add(1, std::memory_order_relaxed);
+          runtime_state->bytes_sent.fetch_add(msg->size(), std::memory_order_relaxed);
+          if (publish_stamp_ns > 0) {
+            const auto send_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+              send_end.time_since_epoch()).count();
+            const auto latency_ns = send_end_ns - publish_stamp_ns;
+            if (latency_ns >= 0) {
+              std::size_t bucket_index = kLatencyBucketBoundsNs.size() - 1;
+              for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
+                if (latency_ns <= kLatencyBucketBoundsNs[i]) {
+                  bucket_index = i;
+                  break;
+                }
+              }
+              runtime_state->latency_buckets[bucket_index].fetch_add(1, std::memory_order_relaxed);
+            }
+          }
         } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && !result.buffered) {
           runtime_state->dropped.fetch_add(1, std::memory_order_relaxed);
+          runtime_state->queue_full.fetch_add(1, std::memory_order_relaxed);
+        } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && result.buffered) {
+          runtime_state->queue_full.fetch_add(1, std::memory_order_relaxed);
         } else {
           runtime_state->errors.fetch_add(1, std::memory_order_relaxed);
         }
@@ -546,23 +592,42 @@ bool KafkaSinkNode::build_subscriptions()
         {
           auto health = producer->health();
           const char * last_error = health.last_error.empty() ? "" : health.last_error.c_str();
+
+          std::array<uint64_t, kLatencyBucketBoundsNs.size()> latency_snapshot{};
+          for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
+            latency_snapshot[i] = runtime_state->latency_buckets[i].load(std::memory_order_relaxed);
+          }
+
           if (health.last_error.empty()) {
             RCLCPP_INFO(
               this->get_logger(),
-              "[kafka_sink] %s size=%zu bytes sent=%lu dropped=%lu errors=%lu",
+              "[kafka_sink] %s size=%zu sent=%lu bytes=%lu dropped=%lu queue_full=%lu errors=%lu "
+              "latency_buckets=[1ms:%lu 5ms:%lu 10ms:%lu 50ms:%lu 100ms:%lu 500ms:%lu >1s:%lu] "
+              "copy_send_ns=%lld",
               runtime_state->log_label.c_str(), msg->size(),
               runtime_state->sent_ok.load(std::memory_order_relaxed),
+              runtime_state->bytes_sent.load(std::memory_order_relaxed),
               runtime_state->dropped.load(std::memory_order_relaxed),
-              runtime_state->errors.load(std::memory_order_relaxed));
+              runtime_state->queue_full.load(std::memory_order_relaxed),
+              runtime_state->errors.load(std::memory_order_relaxed),
+              latency_snapshot[0], latency_snapshot[1], latency_snapshot[2], latency_snapshot[3],
+              latency_snapshot[4], latency_snapshot[5], latency_snapshot[6],
+              static_cast<long long>(copy_send_ns));
           } else {
             RCLCPP_INFO(
               this->get_logger(),
-              "[kafka_sink] %s size=%zu bytes sent=%lu dropped=%lu errors=%lu last_error='%s'",
+              "[kafka_sink] %s size=%zu sent=%lu bytes=%lu dropped=%lu queue_full=%lu errors=%lu "
+              "latency_buckets=[1ms:%lu 5ms:%lu 10ms:%lu 50ms:%lu 100ms:%lu 500ms:%lu >1s:%lu] "
+              "copy_send_ns=%lld last_error='%s'",
               runtime_state->log_label.c_str(), msg->size(),
               runtime_state->sent_ok.load(std::memory_order_relaxed),
+              runtime_state->bytes_sent.load(std::memory_order_relaxed),
               runtime_state->dropped.load(std::memory_order_relaxed),
+              runtime_state->queue_full.load(std::memory_order_relaxed),
               runtime_state->errors.load(std::memory_order_relaxed),
-              last_error);
+              latency_snapshot[0], latency_snapshot[1], latency_snapshot[2], latency_snapshot[3],
+              latency_snapshot[4], latency_snapshot[5], latency_snapshot[6],
+              static_cast<long long>(copy_send_ns), last_error);
           }
         }
       };
