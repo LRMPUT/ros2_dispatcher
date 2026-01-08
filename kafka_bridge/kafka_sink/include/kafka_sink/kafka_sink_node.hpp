@@ -89,6 +89,7 @@ private:
     std::atomic<uint64_t> errors{0};
     std::atomic<uint64_t> bytes_sent{0};
     std::atomic<uint64_t> queue_full{0};
+    std::atomic<int64_t> last_copy_send_ns{0};
     std::array<std::atomic<uint64_t>, 7> latency_buckets{
       std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
       std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0}, std::atomic<uint64_t>{0},
@@ -123,17 +124,22 @@ private:
   std::string map_kafka_topic(const std::string & ros_topic) const;
   kafka_client::KafkaProducerConfig build_producer_config() const;
   rclcpp::QoS build_qos_profile() const;
+  void configure_metrics_timer();
+  void publish_metrics();
 
   std::vector<SubscriptionConfig> configured_subscriptions_;
   std::vector<ActiveSubscription> active_subscriptions_;
   KafkaParameters kafka_parameters_;
   std::shared_ptr<kafka_client::KafkaProducer> kafka_producer_;
+  rclcpp::TimerBase::SharedPtr metrics_timer_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
     on_parameters_set_handle_;
 
   std::atomic_bool is_active_{false};
   int qos_depth_{10};
+  int metrics_interval_ms_{0};
+  std::string metrics_topic_;
 };
 }  // namespace kafka_sink
 
