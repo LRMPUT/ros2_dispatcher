@@ -15,13 +15,11 @@
 #include "kafka_sink/kafka_sink_node.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -34,67 +32,6 @@ namespace kafka_sink
 namespace
 {
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;  // 1 second
-constexpr std::array<int64_t, 7> kLatencyBucketBoundsNs = {
-  1'000'000LL,   // 1 ms
-  5'000'000LL,   // 5 ms
-  10'000'000LL,  // 10 ms
-  50'000'000LL,  // 50 ms
-  100'000'000LL, // 100 ms
-  500'000'000LL, // 500 ms
-  1'000'000'000LL};  // 1 s
-
-std::string json_escape(const std::string & input)
-{
-  std::string output;
-  output.reserve(input.size());
-  for (char ch : input) {
-    switch (ch) {
-      case '"':
-        output += "\\\"";
-        break;
-      case '\\':
-        output += "\\\\";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        output += ch;
-        break;
-    }
-  }
-  return output;
-}
-
-const char * producer_status_to_string(kafka_client::ProducerStatus status)
-{
-  switch (status) {
-    case kafka_client::ProducerStatus::STOPPED:
-      return "stopped";
-    case kafka_client::ProducerStatus::STARTING:
-      return "starting";
-    case kafka_client::ProducerStatus::RUNNING:
-      return "running";
-    case kafka_client::ProducerStatus::DEGRADED:
-      return "degraded";
-    case kafka_client::ProducerStatus::FAILED:
-      return "failed";
-    default:
-      return "unknown";
-  }
-}
 }  // namespace
 
 KafkaSinkNode::ActiveSubscription::ActiveSubscription(ActiveSubscription && other) noexcept
@@ -200,9 +137,6 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<bool>("kafka.drop_when_full", kafka_parameters_.drop_when_full);
   this->declare_parameter<int>("kafka.linger_ms", -1);
   this->declare_parameter<int>("kafka.batch_size", -1);
-  this->declare_parameter<int>("kafka.stats_interval_ms", -1);
-  this->declare_parameter<int>("metrics.interval_ms", 0);
-  this->declare_parameter<std::string>("metrics.ros_topic", "kafka_sink/metrics");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&KafkaSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -241,7 +175,6 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_activate(const rclcpp_lifecycle:
   }
 
   is_active_.store(true, std::memory_order_release);
-  configure_metrics_timer();
   RCLCPP_INFO(
     get_logger(), "Activated kafka_sink with %zu active subscriptions",
     active_subscriptions_.size());
@@ -251,10 +184,6 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_activate(const rclcpp_lifecycle:
 KafkaSinkNode::CallbackReturn KafkaSinkNode::on_deactivate(const rclcpp_lifecycle::State &)
 {
   is_active_.store(false, std::memory_order_release);
-  metrics_timer_.reset();
-  if (metrics_publisher_) {
-    metrics_publisher_->on_deactivate();
-  }
   clear_subscriptions();
   stop_producer();
 
@@ -265,8 +194,6 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_deactivate(const rclcpp_lifecycl
 KafkaSinkNode::CallbackReturn KafkaSinkNode::on_cleanup(const rclcpp_lifecycle::State &)
 {
   is_active_.store(false, std::memory_order_release);
-  metrics_timer_.reset();
-  metrics_publisher_.reset();
   stop_producer();
   clear_subscriptions();
   configured_subscriptions_.clear();
@@ -278,8 +205,6 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_cleanup(const rclcpp_lifecycle::
 KafkaSinkNode::CallbackReturn KafkaSinkNode::on_shutdown(const rclcpp_lifecycle::State &)
 {
   is_active_.store(false, std::memory_order_release);
-  metrics_timer_.reset();
-  metrics_publisher_.reset();
   stop_producer();
   clear_subscriptions();
   configured_subscriptions_.clear();
@@ -300,9 +225,6 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
   int pending_depth = qos_depth_;
   KafkaParameters pending_kafka = kafka_parameters_;
   bool kafka_update_required = false;
-  int pending_metrics_interval_ms = metrics_interval_ms_;
-  std::string pending_metrics_topic = metrics_topic_;
-  bool metrics_update_required = false;
 
   for (const auto & param : parameters) {
     const auto & name = param.get_name();
@@ -317,12 +239,6 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       update_required = true;
     } else if (name == "qos_depth") {
       pending_depth = param.as_int();
-    } else if (name == "metrics.interval_ms") {
-      pending_metrics_interval_ms = param.as_int();
-      metrics_update_required = true;
-    } else if (name == "metrics.ros_topic") {
-      pending_metrics_topic = param.as_string();
-      metrics_update_required = true;
     } else if (name.rfind("kafka.", 0) == 0) {
       const auto & current_state = this->get_current_state();
       if (current_state.id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
@@ -367,9 +283,6 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       } else if (name == "kafka.batch_size") {
         int value = param.as_int();
         pending_kafka.batch_size = value >= 0 ? std::optional<int>{value} : std::nullopt;
-      } else if (name == "kafka.stats_interval_ms") {
-        int value = param.as_int();
-        pending_kafka.stats_interval_ms = value >= 0 ? std::optional<int>{value} : std::nullopt;
       }
     }
   }
@@ -395,24 +308,6 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
   }
   qos_depth_ = pending_depth;
 
-  if (metrics_update_required) {
-    if (pending_metrics_interval_ms < 0) {
-      result.successful = false;
-      result.reason = "metrics.interval_ms must be >= 0";
-      return result;
-    }
-    if (pending_metrics_interval_ms > 0 && pending_metrics_topic.empty()) {
-      result.successful = false;
-      result.reason = "metrics.ros_topic cannot be empty when metrics.interval_ms > 0";
-      return result;
-    }
-    metrics_interval_ms_ = pending_metrics_interval_ms;
-    metrics_topic_ = pending_metrics_topic;
-    if (is_active_.load(std::memory_order_acquire)) {
-      configure_metrics_timer();
-    }
-  }
-
   if (kafka_update_required) {
     std::string kafka_error;
     if (!validate_kafka_parameters(pending_kafka, &kafka_error)) {
@@ -430,21 +325,10 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
 {
   qos_depth_ = this->get_parameter("qos_depth").as_int();
   std::string yaml_config = this->get_parameter("subscriptions_yaml").as_string();
-  metrics_interval_ms_ = this->get_parameter("metrics.interval_ms").as_int();
-  metrics_topic_ = this->get_parameter("metrics.ros_topic").as_string();
 
   std::string qos_error;
   if (!validate_qos_depth(qos_depth_, &qos_error)) {
     *error_message = qos_error;
-    return false;
-  }
-
-  if (metrics_interval_ms_ < 0) {
-    *error_message = "metrics.interval_ms must be >= 0.";
-    return false;
-  }
-  if (metrics_interval_ms_ > 0 && metrics_topic_.empty()) {
-    *error_message = "metrics.ros_topic cannot be empty when metrics.interval_ms > 0.";
     return false;
   }
 
@@ -465,28 +349,6 @@ bool KafkaSinkNode::validate_qos_depth(int qos_depth, std::string * error_messag
     return false;
   }
   return true;
-}
-
-void KafkaSinkNode::configure_metrics_timer()
-{
-  metrics_timer_.reset();
-  if (metrics_interval_ms_ <= 0 || metrics_topic_.empty()) {
-    return;
-  }
-
-  if (!metrics_publisher_ || metrics_publisher_->get_topic_name() != metrics_topic_) {
-    metrics_publisher_ = this->create_publisher<std_msgs::msg::String>(
-      metrics_topic_, rclcpp::SystemDefaultsQoS());
-  }
-  if (is_active_.load(std::memory_order_acquire) && metrics_publisher_) {
-    metrics_publisher_->on_activate();
-  }
-
-  metrics_timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(metrics_interval_ms_),
-    [this]() {
-      publish_metrics();
-    });
 }
 
 bool KafkaSinkNode::validate_kafka_parameters(
@@ -550,8 +412,6 @@ bool KafkaSinkNode::configure_kafka_parameters(std::string * error_message)
   pending.linger_ms = linger_value >= 0 ? std::optional<int>{linger_value} : std::nullopt;
   int batch_value = this->get_parameter("kafka.batch_size").as_int();
   pending.batch_size = batch_value >= 0 ? std::optional<int>{batch_value} : std::nullopt;
-  int stats_value = this->get_parameter("kafka.stats_interval_ms").as_int();
-  pending.stats_interval_ms = stats_value >= 0 ? std::optional<int>{stats_value} : std::nullopt;
 
   if (!validate_kafka_parameters(pending, error_message)) {
     return false;
@@ -571,7 +431,6 @@ kafka_client::KafkaProducerConfig KafkaSinkNode::build_producer_config() const
   config.batch_size = kafka_parameters_.batch_size;
   config.max_queue_messages = kafka_parameters_.max_queue_messages;
   config.drop_when_full = kafka_parameters_.drop_when_full;
-  config.stats_interval_ms = kafka_parameters_.stats_interval_ms;
   config.startup_mode = kafka_parameters_.strict_startup ?
     kafka_client::StartupMode::STRICT :
     kafka_client::StartupMode::TOLERANT;
@@ -630,76 +489,6 @@ rclcpp::QoS KafkaSinkNode::build_qos_profile() const
   return qos;
 }
 
-void KafkaSinkNode::publish_metrics()
-{
-  if (!metrics_publisher_ || !metrics_publisher_->is_activated()) {
-    return;
-  }
-
-  auto producer = kafka_producer_;
-  if (!producer) {
-    return;
-  }
-
-  const auto now = this->get_clock()->now();
-  const auto timestamp_ms = now.nanoseconds() / 1'000'000;
-  const auto health = producer->health();
-
-  std::ostringstream payload;
-  payload << "{";
-  payload << "\"node\":\"kafka_sink\",";
-  payload << "\"timestamp_ms\":" << timestamp_ms << ",";
-  payload << "\"producer_status\":\"" << producer_status_to_string(health.status) << "\",";
-  payload << "\"producer_last_error\":\"" << json_escape(health.last_error) << "\",";
-  payload << "\"latency_bucket_bounds_ns\":[";
-  for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
-    if (i > 0) {
-      payload << ",";
-    }
-    payload << kLatencyBucketBoundsNs[i];
-  }
-  payload << "],";
-  payload << "\"subscriptions\":[";
-
-  for (std::size_t idx = 0; idx < active_subscriptions_.size(); ++idx) {
-    const auto & runtime_state = active_subscriptions_[idx].runtime_state;
-    std::array<uint64_t, kLatencyBucketBoundsNs.size()> latency_snapshot{};
-    for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
-      latency_snapshot[i] = runtime_state->latency_buckets[i].load(std::memory_order_relaxed);
-    }
-
-    if (idx > 0) {
-      payload << ",";
-    }
-    payload << "{";
-    payload << "\"ros_topic\":\"" << json_escape(runtime_state->ros_topic) << "\",";
-    payload << "\"kafka_topic\":\"" << json_escape(runtime_state->kafka_topic) << "\",";
-    payload << "\"msg_type\":\"" << json_escape(runtime_state->msg_type) << "\",";
-    payload << "\"sent\":" << runtime_state->sent_ok.load(std::memory_order_relaxed) << ",";
-    payload << "\"bytes\":" << runtime_state->bytes_sent.load(std::memory_order_relaxed) << ",";
-    payload << "\"dropped\":" << runtime_state->dropped.load(std::memory_order_relaxed) << ",";
-    payload << "\"queue_full\":" << runtime_state->queue_full.load(std::memory_order_relaxed) << ",";
-    payload << "\"errors\":" << runtime_state->errors.load(std::memory_order_relaxed) << ",";
-    payload << "\"last_copy_send_ns\":"
-            << runtime_state->last_copy_send_ns.load(std::memory_order_relaxed) << ",";
-    payload << "\"latency_bucket_counts\":[";
-    for (std::size_t i = 0; i < latency_snapshot.size(); ++i) {
-      if (i > 0) {
-        payload << ",";
-      }
-      payload << latency_snapshot[i];
-    }
-    payload << "]";
-    payload << "}";
-  }
-  payload << "]";
-  payload << "}";
-
-  std_msgs::msg::String message;
-  message.data = payload.str();
-  metrics_publisher_->publish(message);
-}
-
 bool KafkaSinkNode::build_subscriptions()
 {
   clear_subscriptions();
@@ -748,7 +537,6 @@ bool KafkaSinkNode::build_subscriptions()
           runtime_state->next_log_time_ns.load(std::memory_order_acquire);
         const auto stamp_ms = now_ns / 1'000'000;
 
-        const auto send_start = std::chrono::steady_clock::now();
         std::vector<uint8_t> value(msg->size());
         std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
 
@@ -760,44 +548,17 @@ bool KafkaSinkNode::build_subscriptions()
           key_str.c_str(), runtime_state->kafka_topic.c_str());
 
         std::vector<kafka_client::KafkaHeader> headers;
-        headers.reserve(4);
+        headers.reserve(3);
         headers.push_back({"ros_topic", runtime_state->ros_topic});
         headers.push_back({"ros_type", runtime_state->msg_type});
         headers.push_back({"stamp_ms", std::to_string(stamp_ms)});
 
-        const int64_t publish_stamp_ns = message_info.get_rmw_message_info().source_timestamp;
-        if (publish_stamp_ns > 0) {
-          headers.push_back({"ros_publish_ts_ns", std::to_string(publish_stamp_ns)});
-        }
-
-        auto result = producer->send(runtime_state->kafka_topic, {}, value, stamp_ms, headers);
-        const auto send_end = std::chrono::steady_clock::now();
-        const auto copy_send_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          send_end - send_start).count();
-        runtime_state->last_copy_send_ns.store(copy_send_ns, std::memory_order_relaxed);
-
+        auto result = producer->send(
+          runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);
         if (result.status == kafka_client::SendStatus::SENT) {
           runtime_state->sent_ok.fetch_add(1, std::memory_order_relaxed);
-          runtime_state->bytes_sent.fetch_add(msg->size(), std::memory_order_relaxed);
-          if (publish_stamp_ns > 0) {
-            const auto send_end_ns = this->get_clock()->now().nanoseconds();
-            const auto latency_ns = send_end_ns - publish_stamp_ns;
-            if (latency_ns >= 0) {
-              std::size_t bucket_index = kLatencyBucketBoundsNs.size() - 1;
-              for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
-                if (latency_ns <= kLatencyBucketBoundsNs[i]) {
-                  bucket_index = i;
-                  break;
-                }
-              }
-              runtime_state->latency_buckets[bucket_index].fetch_add(1, std::memory_order_relaxed);
-            }
-          }
         } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && !result.buffered) {
           runtime_state->dropped.fetch_add(1, std::memory_order_relaxed);
-          runtime_state->queue_full.fetch_add(1, std::memory_order_relaxed);
-        } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && result.buffered) {
-          runtime_state->queue_full.fetch_add(1, std::memory_order_relaxed);
         } else {
           runtime_state->errors.fetch_add(1, std::memory_order_relaxed);
         }
@@ -808,42 +569,23 @@ bool KafkaSinkNode::build_subscriptions()
         {
           auto health = producer->health();
           const char * last_error = health.last_error.empty() ? "" : health.last_error.c_str();
-
-          std::array<uint64_t, kLatencyBucketBoundsNs.size()> latency_snapshot{};
-          for (std::size_t i = 0; i < kLatencyBucketBoundsNs.size(); ++i) {
-            latency_snapshot[i] = runtime_state->latency_buckets[i].load(std::memory_order_relaxed);
-          }
-
           if (health.last_error.empty()) {
             RCLCPP_INFO(
               this->get_logger(),
-              "[kafka_sink] %s size=%zu sent=%lu bytes=%lu dropped=%lu queue_full=%lu errors=%lu "
-              "latency_buckets=[1ms:%lu 5ms:%lu 10ms:%lu 50ms:%lu 100ms:%lu 500ms:%lu >1s:%lu] "
-              "copy_send_ns=%lld",
+              "[kafka_sink] %s size=%zu bytes sent=%lu dropped=%lu errors=%lu",
               runtime_state->log_label.c_str(), msg->size(),
               runtime_state->sent_ok.load(std::memory_order_relaxed),
-              runtime_state->bytes_sent.load(std::memory_order_relaxed),
               runtime_state->dropped.load(std::memory_order_relaxed),
-              runtime_state->queue_full.load(std::memory_order_relaxed),
-              runtime_state->errors.load(std::memory_order_relaxed),
-              latency_snapshot[0], latency_snapshot[1], latency_snapshot[2], latency_snapshot[3],
-              latency_snapshot[4], latency_snapshot[5], latency_snapshot[6],
-              static_cast<long long>(copy_send_ns));
+              runtime_state->errors.load(std::memory_order_relaxed));
           } else {
             RCLCPP_INFO(
               this->get_logger(),
-              "[kafka_sink] %s size=%zu sent=%lu bytes=%lu dropped=%lu queue_full=%lu errors=%lu "
-              "latency_buckets=[1ms:%lu 5ms:%lu 10ms:%lu 50ms:%lu 100ms:%lu 500ms:%lu >1s:%lu] "
-              "copy_send_ns=%lld last_error='%s'",
+              "[kafka_sink] %s size=%zu bytes sent=%lu dropped=%lu errors=%lu last_error='%s'",
               runtime_state->log_label.c_str(), msg->size(),
               runtime_state->sent_ok.load(std::memory_order_relaxed),
-              runtime_state->bytes_sent.load(std::memory_order_relaxed),
               runtime_state->dropped.load(std::memory_order_relaxed),
-              runtime_state->queue_full.load(std::memory_order_relaxed),
               runtime_state->errors.load(std::memory_order_relaxed),
-              latency_snapshot[0], latency_snapshot[1], latency_snapshot[2], latency_snapshot[3],
-              latency_snapshot[4], latency_snapshot[5], latency_snapshot[6],
-              static_cast<long long>(copy_send_ns), last_error);
+              last_error);
           }
         }
       };

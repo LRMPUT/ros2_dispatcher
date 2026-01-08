@@ -59,7 +59,6 @@
 - **Kafka sink parameters** (`kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`):
   - Subscription/QoS: `qos_depth`, `subscriptions_yaml`.
   - Kafka client: `kafka.bootstrap_servers`, `kafka.client_id`, `kafka.acks`, `kafka.topic_prefix`, `kafka.topic_mapping_mode`, `kafka.fixed_topic`, `kafka.strict_startup`, `kafka.max_queue_messages`, `kafka.drop_when_full`, `kafka.linger_ms`, `kafka.batch_size`.
-  - Metrics publishing: `metrics.interval_ms` (0 disables), `metrics.ros_topic` (JSON metrics payload with per-topic counters and latency buckets).
 - **Introspection manager parameters** (`introspection_manager/config/introspection_manager.param.yaml`):
   - `publisher_queue_depth`, `publisher_reliability`, `publisher_durability`, `publish_on_change`, `filter_hidden`, `introspection_enabled`.
 - **Bringup launch arguments** (`ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`):

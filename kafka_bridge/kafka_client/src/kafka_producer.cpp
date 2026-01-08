@@ -15,7 +15,6 @@
 #include "kafka_client/kafka_producer.hpp"
 
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -26,17 +25,6 @@ namespace kafka_client
 {
 namespace
 {
-class LoggingEventCallback : public RdKafka::EventCb
-{
-public:
-  void event_cb(RdKafka::Event & event) override
-  {
-    if (event.type() == RdKafka::Event::EVENT_STATS) {
-      std::cerr << "[librdkafka stats] " << event.str() << std::endl;
-    }
-  }
-};
-
 bool set_optional_conf(
   RdKafka::Conf & conf, const std::string & key, const std::optional<int> & value,
   std::string & error)
@@ -93,18 +81,6 @@ bool KafkaProducer::create_producer_locked(std::string * error_message)
       *error_message = errstr;
       return false;
     }
-  }
-
-  if (config_.stats_interval_ms.has_value()) {
-    event_cb_ = std::make_unique<LoggingEventCallback>();
-    if (!set_conf("statistics.interval.ms", std::to_string(*config_.stats_interval_ms)) ||
-      conf->set("event_cb", event_cb_.get(), errstr) != RdKafka::Conf::CONF_OK)
-    {
-      *error_message = errstr;
-      return false;
-    }
-  } else {
-    event_cb_.reset();
   }
 
   auto producer = std::unique_ptr<RdKafka::Producer>(RdKafka::Producer::create(conf.get(), errstr));
