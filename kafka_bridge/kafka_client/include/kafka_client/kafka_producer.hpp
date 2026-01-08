@@ -79,7 +79,6 @@ struct KafkaProducerConfig
   std::optional<int> retries;
   std::optional<int> retry_backoff_ms;
   bool enable_idempotence{false};
-  std::optional<int> stats_interval_ms;
 
   std::size_t max_queue_messages{1024};
   bool drop_when_full{true};
@@ -147,7 +146,6 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::unique_ptr<RdKafka::Producer> producer_;
-  std::unique_ptr<RdKafka::EventCb> event_cb_;
   std::deque<QueuedRecord> pending_records_;
   std::thread poll_thread_;
   std::atomic_bool running_{false};
