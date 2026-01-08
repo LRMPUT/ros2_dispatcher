@@ -3,7 +3,7 @@ project(kafka_sink)
 
 find_package(ament_cmake_auto REQUIRED)
 find_package(yaml-cpp REQUIRED)
-find_package(nlohmann_json3 REQUIRED)
+find_package(nlohmann_json REQUIRED)
 ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
@@ -16,7 +16,7 @@ target_link_libraries(
   ${PROJECT_NAME}
   yaml-cpp
   kafka_client::kafka_client
-  nlohmann_json3::nlohmann_json3
+  nlohmann_json::nlohmann_json
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}

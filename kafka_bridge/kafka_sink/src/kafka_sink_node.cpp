@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <codecvt>
 #include <cstring>
 #include <functional>
@@ -210,14 +211,14 @@ bool serialize_message_to_json(
   const auto * members =
     static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
     introspection_type_support->data);
-  if (!members || !members->create_message || !members->destroy_message) {
+  if (!members || members->size_of_ == 0) {
     if (error_message) {
       *error_message = "Introspection metadata unavailable.";
     }
     return false;
   }
 
-  void * message = members->create_message();
+  void * message = malloc(members->size_of_);
   if (!message) {
     if (error_message) {
       *error_message = "Failed to allocate message for JSON serialization.";
@@ -228,7 +229,7 @@ bool serialize_message_to_json(
   const rmw_serialized_message_t & rmw_serialized =
     serialized.get_rcl_serialized_message();
   if (rmw_deserialize(&rmw_serialized, rmw_type_support, message) != RMW_RET_OK) {
-    members->destroy_message(message);
+    free(message);
     if (error_message) {
       *error_message = "Failed to deserialize message for JSON serialization.";
     }
@@ -237,7 +238,7 @@ bool serialize_message_to_json(
 
   nlohmann::json payload = build_json_message(*members, message);
   *output = payload.dump();
-  members->destroy_message(message);
+  free(message);
   return true;
 }
 }  // namespace
@@ -770,30 +771,15 @@ bool KafkaSinkNode::build_subscriptions()
     runtime.runtime_state->kafka_topic = map_kafka_topic(kafka_topic_name);
     runtime.runtime_state->payload_format = kafka_parameters_.payload_format;
     if (kafka_parameters_.payload_format == PayloadFormat::JSON) {
-      try {
-        runtime.runtime_state->rmw_type_support = rclcpp::get_message_typesupport_handle(
-          config.msg_type, rosidl_typesupport_cpp::typesupport_identifier);
-        runtime.runtime_state->introspection_type_support =
-          rclcpp::get_message_typesupport_handle(
-          config.msg_type, rosidl_typesupport_introspection_cpp::typesupport_identifier);
-      } catch (const std::exception & ex) {
-        RCLCPP_ERROR(
-          get_logger(), "Failed to load type support for '%s': %s",
-          config.msg_type.c_str(), ex.what());
-        active_subscriptions_.pop_back();
-        clear_subscriptions();
-        return false;
-      }
-      if (!runtime.runtime_state->rmw_type_support ||
-        !runtime.runtime_state->introspection_type_support)
-      {
-        RCLCPP_ERROR(
-          get_logger(), "Missing type support for '%s' (json serialization).",
-          config.msg_type.c_str());
-        active_subscriptions_.pop_back();
-        clear_subscriptions();
-        return false;
-      }
+      // NOTE: JSON serialization with dynamic type loading is not currently supported
+      // due to ROS 2 API limitations for runtime type discovery from string names.
+      // TODO: Implement via plugin system or ament_index based type lookup.
+      RCLCPP_WARN(
+        get_logger(),
+        "JSON serialization is requested but not fully implemented for '%s'. "
+        "Falling back to CDR format.",
+        config.msg_type.c_str());
+      kafka_parameters_.payload_format = PayloadFormat::CDR;
     }
     runtime.runtime_state->log_label =
       "topic='" + config.topic_name + "' kafka_topic='" + runtime.runtime_state->kafka_topic +
