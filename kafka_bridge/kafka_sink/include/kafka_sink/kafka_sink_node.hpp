@@ -27,6 +27,7 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "kafka_sink/visibility_control.hpp"
 
 namespace kafka_sink
@@ -132,6 +133,7 @@ private:
   KafkaParameters kafka_parameters_;
   std::shared_ptr<kafka_client::KafkaProducer> kafka_producer_;
   rclcpp::TimerBase::SharedPtr metrics_timer_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr metrics_publisher_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
     on_parameters_set_handle_;

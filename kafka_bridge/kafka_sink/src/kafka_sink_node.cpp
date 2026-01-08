@@ -201,7 +201,7 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<int>("kafka.batch_size", -1);
   this->declare_parameter<int>("kafka.stats_interval_ms", -1);
   this->declare_parameter<int>("metrics.interval_ms", 0);
-  this->declare_parameter<std::string>("metrics.kafka_topic", "ros2.metrics.kafka_sink");
+  this->declare_parameter<std::string>("metrics.ros_topic", "kafka_sink/metrics");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&KafkaSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -251,6 +251,9 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_deactivate(const rclcpp_lifecycl
 {
   is_active_.store(false, std::memory_order_release);
   metrics_timer_.reset();
+  if (metrics_publisher_) {
+    metrics_publisher_->on_deactivate();
+  }
   clear_subscriptions();
   stop_producer();
 
@@ -262,6 +265,7 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_cleanup(const rclcpp_lifecycle::
 {
   is_active_.store(false, std::memory_order_release);
   metrics_timer_.reset();
+  metrics_publisher_.reset();
   stop_producer();
   clear_subscriptions();
   configured_subscriptions_.clear();
@@ -274,6 +278,7 @@ KafkaSinkNode::CallbackReturn KafkaSinkNode::on_shutdown(const rclcpp_lifecycle:
 {
   is_active_.store(false, std::memory_order_release);
   metrics_timer_.reset();
+  metrics_publisher_.reset();
   stop_producer();
   clear_subscriptions();
   configured_subscriptions_.clear();
@@ -314,7 +319,7 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
     } else if (name == "metrics.interval_ms") {
       pending_metrics_interval_ms = param.as_int();
       metrics_update_required = true;
-    } else if (name == "metrics.kafka_topic") {
+    } else if (name == "metrics.ros_topic") {
       pending_metrics_topic = param.as_string();
       metrics_update_required = true;
     } else if (name.rfind("kafka.", 0) == 0) {
@@ -395,7 +400,7 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
     }
     if (pending_metrics_interval_ms > 0 && pending_metrics_topic.empty()) {
       result.successful = false;
-      result.reason = "metrics.kafka_topic cannot be empty when metrics.interval_ms > 0";
+      result.reason = "metrics.ros_topic cannot be empty when metrics.interval_ms > 0";
       return result;
     }
     metrics_interval_ms_ = pending_metrics_interval_ms;
@@ -423,7 +428,7 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
   qos_depth_ = this->get_parameter("qos_depth").as_int();
   std::string yaml_config = this->get_parameter("subscriptions_yaml").as_string();
   metrics_interval_ms_ = this->get_parameter("metrics.interval_ms").as_int();
-  metrics_topic_ = this->get_parameter("metrics.kafka_topic").as_string();
+  metrics_topic_ = this->get_parameter("metrics.ros_topic").as_string();
 
   std::string qos_error;
   if (!validate_qos_depth(qos_depth_, &qos_error)) {
@@ -436,7 +441,7 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
     return false;
   }
   if (metrics_interval_ms_ > 0 && metrics_topic_.empty()) {
-    *error_message = "metrics.kafka_topic cannot be empty when metrics.interval_ms > 0.";
+    *error_message = "metrics.ros_topic cannot be empty when metrics.interval_ms > 0.";
     return false;
   }
 
@@ -464,6 +469,14 @@ void KafkaSinkNode::configure_metrics_timer()
   metrics_timer_.reset();
   if (metrics_interval_ms_ <= 0 || metrics_topic_.empty()) {
     return;
+  }
+
+  if (!metrics_publisher_ || metrics_publisher_->get_topic_name() != metrics_topic_) {
+    metrics_publisher_ = this->create_publisher<std_msgs::msg::String>(
+      metrics_topic_, rclcpp::SystemDefaultsQoS());
+  }
+  if (is_active_.load(std::memory_order_acquire) && metrics_publisher_) {
+    metrics_publisher_->on_activate();
   }
 
   metrics_timer_ = this->create_wall_timer(
@@ -611,6 +624,10 @@ rclcpp::QoS KafkaSinkNode::build_qos_profile() const
 
 void KafkaSinkNode::publish_metrics()
 {
+  if (!metrics_publisher_ || !metrics_publisher_->is_activated()) {
+    return;
+  }
+
   auto producer = kafka_producer_;
   if (!producer) {
     return;
@@ -670,13 +687,9 @@ void KafkaSinkNode::publish_metrics()
   payload << "]";
   payload << "}";
 
-  std::string payload_str = payload.str();
-  std::vector<uint8_t> value(payload_str.begin(), payload_str.end());
-  std::vector<kafka_client::KafkaHeader> headers;
-  headers.push_back({"content-type", "application/json"});
-  headers.push_back({"metrics_type", "kafka_sink"});
-
-  producer->send(metrics_topic_, {}, value, timestamp_ms, headers);
+  std_msgs::msg::String message;
+  message.data = payload.str();
+  metrics_publisher_->publish(message);
 }
 
 bool KafkaSinkNode::build_subscriptions()
