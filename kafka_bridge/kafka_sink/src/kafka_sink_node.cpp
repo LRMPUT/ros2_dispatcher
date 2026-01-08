@@ -128,6 +128,7 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("kafka.client_id", kafka_parameters_.client_id);
   this->declare_parameter<std::string>("kafka.acks", kafka_parameters_.acks);
   this->declare_parameter<std::string>("kafka.topic_prefix", kafka_parameters_.topic_prefix);
+  this->declare_parameter<std::string>("kafka.message_key", kafka_parameters_.message_key);
   this->declare_parameter<std::string>("kafka.topic_mapping_mode", "prefix_ros_topic");
   this->declare_parameter<std::string>("kafka.fixed_topic", kafka_parameters_.fixed_topic);
   this->declare_parameter<bool>("kafka.strict_startup", kafka_parameters_.strict_startup);
@@ -254,6 +255,8 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
         pending_kafka.acks = param.as_string();
       } else if (name == "kafka.topic_prefix") {
         pending_kafka.topic_prefix = param.as_string();
+      } else if (name == "kafka.message_key") {
+        pending_kafka.message_key = param.as_string();
       } else if (name == "kafka.topic_mapping_mode") {
         auto mode_value = param.as_string();
         if (mode_value == "prefix_ros_topic") {
@@ -363,6 +366,10 @@ bool KafkaSinkNode::validate_kafka_parameters(
     *error_message = "kafka.acks cannot be empty.";
     return false;
   }
+  if (pending.message_key.empty()) {
+    *error_message = "kafka.message_key cannot be empty.";
+    return false;
+  }
   if (pending.max_queue_messages == 0U) {
     *error_message = "kafka.max_queue_messages must be greater than zero.";
     return false;
@@ -381,6 +388,7 @@ bool KafkaSinkNode::configure_kafka_parameters(std::string * error_message)
   pending.client_id = this->get_parameter("kafka.client_id").as_string();
   pending.acks = this->get_parameter("kafka.acks").as_string();
   pending.topic_prefix = this->get_parameter("kafka.topic_prefix").as_string();
+  pending.message_key = this->get_parameter("kafka.message_key").as_string();
 
   auto mapping_mode = this->get_parameter("kafka.topic_mapping_mode").as_string();
   if (mapping_mode == "prefix_ros_topic") {
@@ -492,6 +500,13 @@ bool KafkaSinkNode::build_subscriptions()
 
   auto qos = build_qos_profile();
 
+  if (configured_subscriptions_.empty()) {
+    return true;
+  }
+
+  const std::vector<uint8_t> message_key_bytes(
+    kafka_parameters_.message_key.begin(), kafka_parameters_.message_key.end());
+
   active_subscriptions_.reserve(configured_subscriptions_.size());
   for (const auto & config : configured_subscriptions_) {
     active_subscriptions_.emplace_back();
@@ -508,7 +523,7 @@ bool KafkaSinkNode::build_subscriptions()
 
     auto runtime_state = runtime.runtime_state;
     auto callback =
-      [this, runtime_state](std::shared_ptr<rclcpp::SerializedMessage> msg) {
+      [this, runtime_state, message_key_bytes](std::shared_ptr<rclcpp::SerializedMessage> msg) {
         if (!is_active_.load(std::memory_order_acquire)) {
           return;
         }
@@ -525,13 +540,21 @@ bool KafkaSinkNode::build_subscriptions()
         std::vector<uint8_t> value(msg->size());
         std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
 
+        // Echo key and topic name
+        std::string key_str(message_key_bytes.begin(), message_key_bytes.end());
+        RCLCPP_DEBUG(
+          this->get_logger(),
+          "[kafka_sink_callback] key='%s', topic='%s'",
+          key_str.c_str(), runtime_state->kafka_topic.c_str());
+
         std::vector<kafka_client::KafkaHeader> headers;
         headers.reserve(3);
         headers.push_back({"ros_topic", runtime_state->ros_topic});
         headers.push_back({"ros_type", runtime_state->msg_type});
         headers.push_back({"stamp_ms", std::to_string(stamp_ms)});
 
-        auto result = producer->send(runtime_state->kafka_topic, {}, value, stamp_ms, headers);
+        auto result = producer->send(
+          runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);
         if (result.status == kafka_client::SendStatus::SENT) {
           runtime_state->sent_ok.fetch_add(1, std::memory_order_relaxed);
         } else if (result.status == kafka_client::SendStatus::QUEUE_FULL && !result.buffered) {
