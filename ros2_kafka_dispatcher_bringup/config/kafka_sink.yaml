@@ -1,11 +1,14 @@
-/**:
+kafka_sink:
   ros__parameters:
     qos_depth: 10
     subscriptions_yaml: |
-      - topic_name: /demo/chatter
-        msg_type: std_msgs/msg/String
+      - topic_name: /sensing/gnss/gnss_transforms/rear_axis_pose
+        msg_type: geometry_msgs/msg/PoseStamped
       - topic_name: /demo/number
         msg_type: std_msgs/msg/Int32
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "kafka_sink/metrics"
     kafka.bootstrap_servers: "localhost:9092"
     kafka.client_id: "kafka_sink"
     kafka.acks: "all"
@@ -17,3 +20,5 @@
     kafka.drop_when_full: true
     kafka.linger_ms: 5
     kafka.batch_size: 65536
+    kafka.payload_format: "cdr"
+    kafka.message_key: "robot23"
