@@ -511,24 +511,8 @@ void KafkaSourceNode::process_message(RdKafka::Message * message)
   std::memcpy(rmw_serialized_in.buffer, payload, payload_size);
   rmw_serialized_in.buffer_length = payload_size;
 
-  const auto * members =
-    static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
-    type_support.introspection_type_support->data);
-  void * ros_message = std::malloc(members->size_of_);
-  if (!ros_message) {
-    metrics->failed.fetch_add(1, std::memory_order_relaxed);
-    if (should_log_throttled(next_error_log_time_ns_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to allocate message for '%s'", ros_type.c_str());
-    }
-    return;
-  }
   // The incoming Kafka payload is already a ROS 2 CDR stream, so skip the
   // deserialize/serialize round-trip and publish it directly.
-
-  // ros_message was allocated earlier but is no longer needed; free it to
-  // avoid a leak while eliminating the unnecessary round-trip.
-  std::free(ros_message);
-
   rclcpp::SerializedMessage serialized_out(payload_size);
   auto & rmw_serialized_out = serialized_out.get_rcl_serialized_message();
   // Copy the CDR payload from the incoming buffer into the ROS 2 serialized message.
