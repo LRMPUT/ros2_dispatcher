@@ -30,9 +30,10 @@
 #include "lifecycle_msgs/msg/state.hpp"
 #include "nlohmann/json.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
-#include "rclcpp/typesupport_helpers.hpp"
+#include "rosbag2_cpp/typesupport_helpers.hpp"
 #include "rmw/rmw.h"
 #include "rmw/serialized_message.h"
+#include "rosidl_runtime_c/message_initialization.h"
 #include "rosidl_typesupport_cpp/identifier.hpp"
 #include "rosidl_typesupport_introspection_cpp/field_types.hpp"
 #include "rosidl_typesupport_introspection_cpp/identifier.hpp"
@@ -164,6 +165,9 @@ nlohmann::json build_json_scalar(
       return converter.to_bytes(value);
     }
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+      if (!value_ptr || !member.members_) {
+        return nullptr;
+      }
       const auto * members =
         static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
         member.members_->data);
@@ -179,18 +183,29 @@ nlohmann::json build_json_array(
   const void * array_ptr)
 {
   nlohmann::json output = nlohmann::json::array();
+  if (!array_ptr) {
+    return output;
+  }
+
   const size_t size = member.array_size_ ?
     member.array_size_ :
     (member.size_function ? member.size_function(array_ptr) : 0U);
-  const size_t element_size = member_element_size(member);
+
   for (size_t index = 0; index < size; ++index) {
     const void * element_ptr = nullptr;
+    // For sequences (std::vector), always use get_const_function
     if (member.get_const_function) {
       element_ptr = member.get_const_function(array_ptr, index);
-    } else if (element_size > 0) {
-      element_ptr = static_cast<const uint8_t *>(array_ptr) + (index * element_size);
+    } else {
+      // For fixed-size arrays, use pointer arithmetic
+      const size_t element_size = member_element_size(member);
+      if (element_size > 0) {
+        element_ptr = static_cast<const uint8_t *>(array_ptr) + (index * element_size);
+      }
     }
-    output.push_back(build_json_scalar(member, element_ptr));
+    if (element_ptr) {
+      output.push_back(build_json_scalar(member, element_ptr));
+    }
   }
   return output;
 }
@@ -237,9 +252,23 @@ bool serialize_message_to_json(
     return false;
   }
 
+  // Initialize memory to zero - critical for strings/vectors in ROS messages
+  memset(message, 0, members->size_of_);
+  
+  // Call the message's init function if available
+  if (members->init_function) {
+    // Initialize with default initialization
+    rosidl_runtime_cpp::MessageInitialization init;
+    members->init_function(message, init);
+  }
+
   const rmw_serialized_message_t & rmw_serialized =
     serialized.get_rcl_serialized_message();
   if (rmw_deserialize(&rmw_serialized, rmw_type_support, message) != RMW_RET_OK) {
+    // Call fini if available to clean up any initialized fields
+    if (members->fini_function) {
+      members->fini_function(message);
+    }
     free(message);
     if (error_message) {
       *error_message = "Failed to deserialize message for JSON serialization.";
@@ -249,8 +278,40 @@ bool serialize_message_to_json(
 
   nlohmann::json payload = build_json_message(*members, message);
   *output = payload.dump();
+  
+  // Clean up
+  if (members->fini_function) {
+    members->fini_function(message);
+  }
   free(message);
   return true;
+}
+
+// Load type support dynamically from a message type string (e.g., "geometry_msgs/msg/PoseStamped")
+bool load_type_support(
+  const std::string & msg_type,
+  const rosidl_message_type_support_t ** rmw_type_support,
+  const rosidl_message_type_support_t ** introspection_type_support)
+{
+  try {
+    auto ts_lib = rosbag2_cpp::get_typesupport_library(
+      msg_type, "rosidl_typesupport_cpp");
+    auto introspection_ts_lib = rosbag2_cpp::get_typesupport_library(
+      msg_type, "rosidl_typesupport_introspection_cpp");
+
+    if (!ts_lib || !introspection_ts_lib) {
+      return false;
+    }
+
+    *rmw_type_support = rosbag2_cpp::get_typesupport_handle(
+      msg_type, "rosidl_typesupport_cpp", ts_lib);
+    *introspection_type_support = rosbag2_cpp::get_typesupport_handle(
+      msg_type, "rosidl_typesupport_introspection_cpp", introspection_ts_lib);
+
+    return (*rmw_type_support != nullptr) && (*introspection_type_support != nullptr);
+  } catch (...) {
+    return false;
+  }
 }
 }  // namespace
 
@@ -841,15 +902,24 @@ bool KafkaSinkNode::build_subscriptions()
     runtime.runtime_state->kafka_topic = map_kafka_topic(kafka_topic_name);
     runtime.runtime_state->payload_format = kafka_parameters_.payload_format;
     if (kafka_parameters_.payload_format == PayloadFormat::JSON) {
-      // NOTE: JSON serialization with dynamic type loading is not currently supported
-      // due to ROS 2 API limitations for runtime type discovery from string names.
-      // TODO: Implement via plugin system or ament_index based type lookup.
-      RCLCPP_WARN(
-        get_logger(),
-        "JSON serialization is requested but not fully implemented for '%s'. "
-        "Falling back to CDR format.",
-        config.msg_type.c_str());
-      kafka_parameters_.payload_format = PayloadFormat::CDR;
+      // Attempt to load type support for JSON serialization
+      if (!load_type_support(
+            config.msg_type,
+            &runtime.runtime_state->rmw_type_support,
+            &runtime.runtime_state->introspection_type_support))
+      {
+        RCLCPP_WARN(
+          get_logger(),
+          "Failed to load type support for JSON serialization of '%s'. "
+          "Falling back to CDR format.",
+          config.msg_type.c_str());
+        runtime.runtime_state->payload_format = PayloadFormat::CDR;
+      } else {
+        RCLCPP_INFO(
+          get_logger(),
+          "Successfully loaded type support for JSON serialization of '%s'",
+          config.msg_type.c_str());
+      }
     }
     runtime.runtime_state->log_label =
       "topic='" + config.topic_name + "' kafka_topic='" + runtime.runtime_state->kafka_topic +
@@ -940,16 +1010,8 @@ bool KafkaSinkNode::build_subscriptions()
           key_str.c_str(), runtime_state->kafka_topic.c_str());
 
         std::vector<kafka_client::KafkaHeader> headers;
-        headers.reserve(6);
-        headers.push_back({"ros_topic", runtime_state->ros_topic});
+        headers.reserve(1);
         headers.push_back({"ros_type", runtime_state->msg_type});
-        headers.push_back({"kafka_topic", runtime_state->kafka_topic});
-        headers.push_back({"msg_type", runtime_state->msg_type});
-        headers.push_back({"stamp_ms", std::to_string(stamp_ms)});
-        headers.push_back({
-          "payload_format",
-          runtime_state->payload_format == PayloadFormat::JSON ? "json" : "cdr"
-        });
 
         runtime_state->msgs_total.fetch_add(1, std::memory_order_relaxed);
         runtime_state->bytes_total.fetch_add(static_cast<uint64_t>(value.size()), std::memory_order_relaxed);
@@ -1014,9 +1076,49 @@ bool KafkaSinkNode::build_subscriptions()
     if (runtime.subscription == nullptr) {
       RCLCPP_ERROR(
         get_logger(), "Failed to create subscription for topic '%s'", runtime.topic_name.c_str());
-      active_subscriptions_.pop_back();
-      clear_subscriptions();
       return false;
+    }
+
+    // If JSON serialization is requested but type support wasn't loaded yet,
+    // try to get it from the subscription
+    if (runtime.runtime_state->payload_format == PayloadFormat::JSON &&
+        !runtime.runtime_state->rmw_type_support)
+    {
+      // The subscription was created successfully, so the type support should be available
+      try {
+        auto ts_lib = rosbag2_cpp::get_typesupport_library(
+          runtime.msg_type, "rosidl_typesupport_cpp");
+        auto introspection_ts_lib = rosbag2_cpp::get_typesupport_library(
+          runtime.msg_type, "rosidl_typesupport_introspection_cpp");
+
+        if (ts_lib && introspection_ts_lib) {
+          runtime.runtime_state->rmw_type_support =
+            rosbag2_cpp::get_typesupport_handle(
+              runtime.msg_type, "rosidl_typesupport_cpp", ts_lib);
+          runtime.runtime_state->introspection_type_support =
+            rosbag2_cpp::get_typesupport_handle(
+              runtime.msg_type, "rosidl_typesupport_introspection_cpp", introspection_ts_lib);
+        }
+      } catch (...) {
+        runtime.runtime_state->rmw_type_support = nullptr;
+        runtime.runtime_state->introspection_type_support = nullptr;
+      }
+
+      if (runtime.runtime_state->rmw_type_support &&
+          runtime.runtime_state->introspection_type_support)
+      {
+        RCLCPP_INFO(
+          get_logger(),
+          "Successfully loaded type support (post-subscription) for JSON serialization of '%s'",
+          runtime.msg_type.c_str());
+      } else {
+        RCLCPP_WARN(
+          get_logger(),
+          "Failed to load type support even after subscription creation for '%s'. "
+          "Falling back to CDR format.",
+          runtime.msg_type.c_str());
+        runtime.runtime_state->payload_format = PayloadFormat::CDR;
+      }
     }
   }
   return true;

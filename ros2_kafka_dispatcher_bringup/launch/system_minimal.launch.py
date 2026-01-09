@@ -14,6 +14,7 @@ def generate_launch_description():
     qos_depth = LaunchConfiguration("qos_depth")
     controller_log_level = LaunchConfiguration("controller_log_level")
     kafka_sink_log_level = LaunchConfiguration("kafka_sink_log_level")
+    kafka_sink_param_file = LaunchConfiguration("kafka_sink_param_file")
     introspection_manager_param_file = LaunchConfiguration("introspection_manager_param_file")
     introspection_manager_log_level = LaunchConfiguration("introspection_manager_log_level")
 
@@ -49,6 +50,16 @@ def generate_launch_description():
             DeclareLaunchArgument("qos_depth", default_value="10"),
             DeclareLaunchArgument("controller_log_level", default_value="debug"),
             DeclareLaunchArgument("kafka_sink_log_level", default_value="info"),
+            DeclareLaunchArgument(
+                "kafka_sink_param_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("ros2_kafka_dispatcher_bringup"),
+                        "config",
+                        "kafka_sink.yaml",
+                    ]
+                ),
+            ),
             DeclareLaunchArgument("introspection_manager_param_file", default_value=""),
             DeclareLaunchArgument("introspection_manager_log_level", default_value="DEBUG"),
             IncludeLaunchDescription(
@@ -71,6 +82,7 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(kafka_sink_launch),
                 launch_arguments={
+                    "param_file": kafka_sink_param_file,
                     "subscriptions_yaml": subscriptions_yaml,
                     "qos_depth": qos_depth,
                     "use_composition": "false",
