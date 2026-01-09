@@ -73,7 +73,7 @@ std::unordered_map<std::string, std::string> parse_topic_mappings(
 std::string json_escape(const std::string & input)
 {
   std::ostringstream escaped;
-  for (char ch : input) {
+  for (unsigned char ch : input) {
     switch (ch) {
       case '\\':
         escaped << "\\\\";
@@ -90,8 +90,20 @@ std::string json_escape(const std::string & input)
       case '\t':
         escaped << "\\t";
         break;
+      case '\b':
+        escaped << "\\b";
+        break;
+      case '\f':
+        escaped << "\\f";
+        break;
       default:
-        escaped << ch;
+        // Escape other control characters (U+0000 to U+001F) as unicode sequences
+        if (ch < 0x20) {
+          escaped << "\\u00" << std::hex << std::uppercase << std::setw(2) 
+                  << std::setfill('0') << static_cast<int>(ch) << std::dec;
+        } else {
+          escaped << ch;
+        }
         break;
     }
   }
