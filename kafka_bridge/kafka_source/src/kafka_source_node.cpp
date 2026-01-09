@@ -317,6 +317,12 @@ bool KafkaSourceNode::validate_parameters(std::string * error_message) const
     }
     return false;
   }
+  if (metrics_enabled_ && metrics_topic_.empty()) {
+    if (error_message) {
+      *error_message = "metrics.topic must be non-empty when metrics are enabled.";
+    }
+    return false;
+  }
   return true;
 }
 
