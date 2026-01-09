@@ -41,6 +41,8 @@ Example:
 
 Metrics are published as JSON on the topic configured by `metrics.topic`. Each entry includes totals, deltas, throughput, and latency percentiles.
 
+**Note:** The `metrics.topic` parameter specifies a relative topic name (default: `kafka_source/metrics`). ROS 2 automatically prepends the node's namespace, resulting in an absolute topic name (e.g., `/kafka_source/metrics` in the default namespace).
+
 Example subscription:
 
 ```bash
