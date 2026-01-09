@@ -414,17 +414,12 @@ void KafkaSourceNode::process_message(RdKafka::Message * message)
 
   std::string ros_type;
   if (auto headers = message->headers()) {
-    for (int idx = 0; idx < headers->size(); ++idx) {
-      std::string key;
-      const void * value = nullptr;
-      size_t value_size = 0;
-      if (headers->get(idx, key, value, value_size) != RdKafka::ERR_NO_ERROR) {
-        continue;
-      }
-      if (key == "ros_type" && value) {
-        ros_type.assign(static_cast<const char *>(value), value_size);
-        break;
-      }
+    auto header_list = headers->get("ros_type");
+    if (!header_list.empty()) {
+      const auto & header = header_list[0];
+      ros_type.assign(
+        static_cast<const char *>(header.value()),
+        header.value_size());
     }
   }
 
@@ -632,7 +627,7 @@ rclcpp::GenericPublisher::SharedPtr KafkaSourceNode::get_or_create_publisher(
     return it->second;
   }
 
-  rclcpp::QoS qos(rclcpp::KeepLast(qos_depth_));
+  rclcpp::QoS qos{rclcpp::KeepLast(qos_depth_)};
   auto publisher = create_generic_publisher(ros_topic, ros_type, qos);
   publishers_[key] = publisher;
   return publisher;
@@ -745,7 +740,7 @@ void KafkaSourceNode::reset_metrics_timer()
   }
 }
 
-bool KafkaSourceNode::should_log_throttled(std::atomic<int64_t> & next_log_time_ns) const
+bool KafkaSourceNode::should_log_throttled(std::atomic<int64_t> & next_log_time_ns)
 {
   int64_t now_ns = get_clock()->now().nanoseconds();
   int64_t expected = next_log_time_ns.load(std::memory_order_relaxed);

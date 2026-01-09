@@ -108,7 +108,7 @@ private:
   std::string derive_ros_topic(const std::string & kafka_topic) const;
   void publish_metrics();
   void reset_metrics_timer();
-  bool should_log_throttled(std::atomic<int64_t> & next_log_time_ns) const;
+  bool should_log_throttled(std::atomic<int64_t> & next_log_time_ns);
 
   KafkaParameters kafka_parameters_;
   std::string ros_topic_prefix_{"/kafka_decoded"};
