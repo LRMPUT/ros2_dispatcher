@@ -8,6 +8,13 @@
 - **introspection_manager** (`introspection_manager/`): Monitors the ROS 2 graph and exposes topic/type listings via the `~/topics_info` publisher and `~/get_topics` service. Configurable defaults in `introspection_manager/config/introspection_manager.param.yaml`. Launch file: `introspection_manager/launch/introspection_manager.launch.py`.
 - **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka sink lifecycle. Supports selection modes `gui` | `file` | `all`, validates topics (optional), and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
 - **kafka_sink** (`kafka_bridge/kafka_sink/`): Lifecycle node that subscribes to configured topics and forwards payloads to Kafka using `kafka_client`. Parameters (e.g., `subscriptions_yaml`, `kafka.bootstrap_servers`, QoS depth) are defined in `kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`. Launch file: `kafka_bridge/kafka_sink/launch/kafka_sink_container.launch.py`.
+
+## Consuming CDR payloads
+
+When `kafka_sink` runs with `kafka.payload_format:=cdr` (default), Kafka message values are raw ROS 2 CDR bytes.
+
+- Convert to JSON and publish back to Kafka: `ros2_kafka_json_sidecar.py`
+- Republish back into ROS 2 (deserialize CDR and publish messages): `ros2_kafka_cdr_to_ros.py`
 - **ros2_kafka_dispatcher_bringup** (`ros2_kafka_dispatcher_bringup/`): Launches the dispatcher controller, Kafka sink, and introspection manager together. Minimal setup in `ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`; composed setup in `ros2_kafka_dispatcher_bringup/launch/system_composed.launch.py`.
 - **processing_plugins/** (`processing_plugins/`): Contains placeholder plugin packages (`gps_velocity_estimator`, `moving_average_filter`) without documented behavior in this repository.
 - **plugin_loader/** and **plugin_interfaces/**: Package stubs with manifests; runtime behavior is not defined in this repository.
