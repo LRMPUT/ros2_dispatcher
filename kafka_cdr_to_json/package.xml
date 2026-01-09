@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>kafka_cdr_to_json</name>
+  <version>1.0.0</version>
+  <description>Lifecycle node that converts Kafka CDR payloads into JSON and publishes results with metrics.</description>
+  <maintainer email="maciej.krupka@put.poznan.pl">Maciej Krupka</maintainer>
+  <license>Apache License 2.0</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>rclcpp_components</depend>
+  <depend>kafka_client</depend>
+  <depend>librdkafka-dev</depend>
+  <depend>nlohmann_json3</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosidl_typesupport_introspection_cpp</depend>
+  <depend>rosidl_runtime_cpp</depend>
+  <depend>rmw</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

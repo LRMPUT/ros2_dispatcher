@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    kafka.bootstrap_servers: "localhost:9092"
+    kafka.group_id: "kafka-cdr-to-json"
+    kafka.input_topic_pattern: "^ros2\\..*"
+    kafka.output_topic_prefix: "ros2_json"
+    kafka.offset_reset: "latest"
+    json.include_ros_type: true
+    json.include_timestamp: true
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "kafka_cdr2json/metrics"
+    topic_mappings: ""
