@@ -504,45 +504,21 @@ void KafkaSourceNode::process_message(RdKafka::Message * message)
     }
     return;
   }
-  std::memset(ros_message, 0, members->size_of_);
-  if (members->init_function) {
-    rosidl_runtime_cpp::MessageInitialization init = rosidl_runtime_cpp::MessageInitialization::ALL;
-    members->init_function(ros_message, init);
-  }
+  // The incoming Kafka payload is already a ROS 2 CDR stream, so skip the
+  // deserialize/serialize round-trip and publish it directly.
 
-  if (rmw_deserialize(&rmw_serialized_in, type_support.rmw_type_support, ros_message) != RMW_RET_OK) {
-    metrics->failed.fetch_add(1, std::memory_order_relaxed);
-    if (members->fini_function) {
-      members->fini_function(ros_message);
-    }
-    std::free(ros_message);
-    if (should_log_throttled(next_error_log_time_ns_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to deserialize '%s' for '%s' (%zu bytes)",
-        ros_type.c_str(), ros_topic.c_str(), payload_size);
-    }
-    return;
-  }
+  // ros_message was allocated earlier but is no longer needed; free it to
+  // avoid a leak while eliminating the unnecessary round-trip.
+  std::free(ros_message);
 
   rclcpp::SerializedMessage serialized_out(payload_size);
   auto & rmw_serialized_out = serialized_out.get_rcl_serialized_message();
-  if (rmw_serialize(ros_message, type_support.rmw_type_support, &rmw_serialized_out) != RMW_RET_OK) {
-    metrics->failed.fetch_add(1, std::memory_order_relaxed);
-    if (members->fini_function) {
-      members->fini_function(ros_message);
-    }
-    std::free(ros_message);
-    if (should_log_throttled(next_error_log_time_ns_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to serialize '%s' for '%s'", ros_type.c_str(),
-        ros_topic.c_str());
-    }
-    return;
-  }
-
-  if (members->fini_function) {
-    members->fini_function(ros_message);
-  }
-  std::free(ros_message);
-
+  // Copy the CDR payload from the incoming buffer into the ROS 2 serialized message.
+  std::memcpy(
+    rmw_serialized_out.buffer,
+    rmw_serialized_in.buffer,
+    rmw_serialized_in.buffer_length);
+  rmw_serialized_out.buffer_length = rmw_serialized_in.buffer_length;
   auto publisher = get_or_create_publisher(ros_topic, ros_type);
   if (!publisher) {
     metrics->failed.fetch_add(1, std::memory_order_relaxed);
