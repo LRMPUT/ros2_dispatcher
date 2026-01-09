@@ -103,9 +103,11 @@ KafkaSendResult KafkaProducer::try_produce_locked(const QueuedRecord & record)
 
   RdKafka::Headers * headers = RdKafka::Headers::create();
   for (const auto & header : record.headers) {
-    headers->add(header.key, header.value);
+    headers->add(header.key, header.value.c_str(), header.value.size());
   }
 
+  // Use the headers-enabled produce() overload with signature:
+  // produce(topic, partition, flags, payload, len, key, keylen, timestamp, headers, msg_opaque)
   RdKafka::ErrorCode result = producer_->produce(
     record.topic,
     RdKafka::Topic::PARTITION_UA,
@@ -115,8 +117,8 @@ KafkaSendResult KafkaProducer::try_produce_locked(const QueuedRecord & record)
     record.key.empty() ? nullptr : record.key.data(),
     record.key.empty() ? 0 : record.key.size(),
     record.timestamp_ms,
-    nullptr,
-    headers);
+    headers,
+    nullptr);
 
   if (result == RdKafka::ERR_NO_ERROR) {
     // ownership of headers transferred to librdkafka on success
