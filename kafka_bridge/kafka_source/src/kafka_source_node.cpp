@@ -648,10 +648,38 @@ std::string KafkaSourceNode::derive_ros_topic(const std::string & kafka_topic) c
   if (!prefix.empty() && prefix.front() != '/') {
     prefix.insert(prefix.begin(), '/');
   }
-  if (prefix.empty()) {
-    return "/" + suffix;
+
+  // Handle empty suffix explicitly to avoid trailing slashes such as "prefix/".
+  if (suffix.empty()) {
+    if (prefix.empty()) {
+      // Fall back to the root topic.
+      return "/";
+    }
+    return prefix;
   }
-  return prefix + "/" + suffix;
+
+  // Build the raw topic from prefix and suffix.
+  std::string topic;
+  if (prefix.empty()) {
+    topic = "/" + suffix;
+  } else {
+    topic = prefix + "/" + suffix;
+  }
+
+  // Normalize: collapse multiple consecutive slashes into a single slash.
+  auto new_end = std::unique(
+    topic.begin(), topic.end(),
+    [](char a, char b) {
+      return a == '/' && b == '/';
+    });
+  topic.erase(new_end, topic.end());
+
+  // Remove a trailing slash, except when the topic is exactly "/".
+  if (topic.size() > 1 && topic.back() == '/') {
+    topic.pop_back();
+  }
+
+  return topic;
 }
 
 void KafkaSourceNode::publish_metrics()
