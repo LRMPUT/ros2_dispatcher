@@ -1,0 +1,12 @@
+/**:
+  ros__parameters:
+    qos_depth: 10
+    ros_topic_prefix: "/kafka_decoded"
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "kafka_source/metrics"
+    kafka.bootstrap_servers: "localhost:9092"
+    kafka.group_id: "ros2-kafka-source"
+    kafka.topic_pattern: "^ros2\\..*"
+    kafka.offset_reset: "latest"
+    topic_mappings: ""
