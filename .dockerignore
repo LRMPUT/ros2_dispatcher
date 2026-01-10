@@ -1,0 +1,14 @@
+.git
+.gitignore
+.github
+build
+install
+log
+**/build
+**/install
+**/log
+*.pyc
+__pycache__
+.vscode
+.idea
+.DS_Store
