@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "${MOSQUITTO_PORT:-1884}:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  # mqtt-explorer service removed due to image pull failures on some registries.
+  # To add a GUI, either run the MQTT Explorer desktop app locally or
+  # add a maintained container image of your choice to this compose file.
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
