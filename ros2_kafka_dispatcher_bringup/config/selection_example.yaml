@@ -2,3 +2,11 @@
   msg_type: std_msgs/msg/String
 - topic_name: /demo/number
   msg_type: std_msgs/msg/Int32
+- topic_name: /demo/cmd_vel
+  msg_type: geometry_msgs/msg/Twist
+  topic_tools:
+    plugin: topic_tools::ThrottleNode
+    name: throttle_cmd_vel
+    output_topic: /throttle/cmd_vel
+    parameters:
+      period: 0.1

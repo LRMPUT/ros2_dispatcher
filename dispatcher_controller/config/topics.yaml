@@ -2,3 +2,8 @@
   msg_type: sensor_msgs/msg/Image
 - topic_name: /cmd_vel
   msg_type: geometry_msgs/msg/Twist
+  topic_tools:
+    plugin: topic_tools::ThrottleNode
+    output_topic: /throttle/cmd_vel
+    parameters:
+      period: 0.05

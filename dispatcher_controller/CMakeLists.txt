@@ -7,6 +7,7 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(composition_interfaces REQUIRED)
 find_package(introspection_manager_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -41,6 +42,7 @@ ament_target_dependencies(dispatcher_controller_node
   lifecycle_msgs
   rcl_interfaces
   rclcpp_components
+  composition_interfaces
   introspection_manager_msgs
   yaml-cpp
 )
