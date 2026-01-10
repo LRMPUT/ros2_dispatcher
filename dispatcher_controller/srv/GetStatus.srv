@@ -5,6 +5,7 @@ string message
 string selection_mode
 bool streaming_active
 string kafka_sink_state
+string mosquitto_sink_state
 introspection_manager_msgs/TopicInfo[] applied_topics
 uint32 gui_selection_count
 uint32 file_selection_count

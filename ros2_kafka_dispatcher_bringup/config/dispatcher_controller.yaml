@@ -3,6 +3,8 @@
     selection_mode: file
     selection_file_path: ""
     kafka_sink_node_name: /kafka_sink
+    mosquitto_sink_node_name: /mosquitto_sink
+    allow_missing_sinks: true
     validate_topics: false
     auto_apply_on_mode_change: true
     disable_introspection_after_apply: true
