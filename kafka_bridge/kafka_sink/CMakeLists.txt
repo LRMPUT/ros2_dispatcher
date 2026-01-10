@@ -35,7 +35,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_kafka_sink ${PROJECT_NAME} yaml-cpp)
 endif()
 
-ament_auto_package(INSTALL_TO_SHARE
+ament_auto_package(USE_SCOPED_HEADER_INSTALL_DIR
+  INSTALL_TO_SHARE
   launch
   config
 )
