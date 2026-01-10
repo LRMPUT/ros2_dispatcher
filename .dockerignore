@@ -1,0 +1,15 @@
+.git
+.gitignore
+.github
+build
+install
+log
+**/build
+**/install
+**/log
+*.pyc
+__pycache__
+.vscode
+.idea
+.DS_Store
+_codeql_detected_source_root

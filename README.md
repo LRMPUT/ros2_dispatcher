@@ -96,3 +96,54 @@ Behavior:
 - Dynamically imports ROS 2 message classes using `rosidl_runtime_py.utilities.get_message`.
 - Deserializes messages with `rclpy.serialization.deserialize_message` and publishes JSON to a mirrored topic (input topic name + `--output-suffix`, default `.json`).
 - Logs and skips messages when the ROS type is unknown or the payload cannot be deserialized.
+
+## Docker & CI/CD
+The repository ships with a multi-stage Docker build and a GitHub Actions workflow that builds, smoke-tests, and (on releases) publishes images to GHCR.
+
+### Docker build
+```bash
+docker build \
+  -f docker/Dockerfile \
+  --build-arg ROS_DISTRO=humble \
+  --build-arg GIT_SHA="$(git rev-parse HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg IMAGE_SOURCE="https://github.com/<org>/<repo>" \
+  -t ros2-kafka-dispatcher:local \
+  .
+```
+The base image is `ros:<distro>-ros-base`, controlled by the `ROS_DISTRO` build arg (default: `humble`).
+
+### Docker run
+```bash
+docker run --rm -it ros2-kafka-dispatcher:local bash
+```
+
+### Health check / smoke test
+The container health check validates the ROS 2 environment by listing packages. You can run the same command manually:
+```bash
+docker run --rm ros2-kafka-dispatcher:local \
+  bash -lc "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash && ros2 pkg list >/dev/null"
+```
+
+### CI/CD behavior
+- Pull requests and pushes build the image and run the smoke test.
+- Tags matching `v*.*.*` publish the image to GitHub Container Registry and Docker Hub.
+- `latest` is only applied on builds from `main`; release tags publish semantic-version and git-SHA tags.
+The smoke test runs inside the builder stage so it exercises the same dependency set used for compilation while keeping the runtime image minimal.
+
+### Publishing to Docker Hub (professional setup)
+1. Create a Docker Hub repository (e.g., `your-org/ros2-kafka-dispatcher`).
+2. Create a Docker Hub access token (Account Settings → Security) and store it in GitHub secrets:
+   - `DOCKERHUB_USERNAME`: your Docker Hub username or org bot account.
+   - `DOCKERHUB_TOKEN`: the access token.
+   - `DOCKERHUB_REPOSITORY`: the full image name, e.g. `your-org/ros2-kafka-dispatcher`.
+3. Push to `main` for `latest` and SHA tags, or create a tag `vX.Y.Z` for release tags.
+
+Example tag publish:
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+The workflow will publish:
+- `your-org/ros2-kafka-dispatcher:1.2.3`
+- `your-org/ros2-kafka-dispatcher:sha-<shortsha>`
