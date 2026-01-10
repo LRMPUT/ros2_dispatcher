@@ -122,6 +122,14 @@ private:
   bool switch_mode(SelectionMode new_mode, const std::string & file_path, bool apply_now,
     std::string & error_out);
   bool apply_selection(const std::vector<TopicSelection> & topics, std::string & error_out);
+  bool apply_selection_to_sink(
+    const std::string & sink_label,
+    const std::string & sink_node_name,
+    const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+    const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client,
+    const rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr & set_parameters_client,
+    const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs,
+    std::string & error_out);
   bool deactivate_kafka_sink(std::string & error_out);
   std::optional<uint8_t> get_kafka_sink_state();
   bool change_kafka_sink_state(uint8_t transition_id, const std::string & action,

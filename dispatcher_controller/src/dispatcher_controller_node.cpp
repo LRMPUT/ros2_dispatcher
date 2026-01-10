@@ -522,12 +522,6 @@ void DispatcherControllerNode::handle_get_status(
 {
   std::lock_guard<std::mutex> lock(mutex_);
   response->selection_mode = mode_to_string(selection_mode_);
-void DispatcherControllerNode::handle_get_status(
-  const dispatcher_controller::srv::GetStatus::Request::SharedPtr /*request*/,
-  dispatcher_controller::srv::GetStatus::Response::SharedPtr response)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  response->selection_mode = mode_to_string(selection_mode_);
   auto kafka_state = get_kafka_sink_state();
   response->kafka_sink_state = kafka_state ? (state_string(*kafka_state)) : "unknown";
   std::optional<uint8_t> mosquitto_state;
@@ -550,15 +544,6 @@ void DispatcherControllerNode::handle_get_status(
   response->streaming_active = streaming_active;
   response->applied_topics = applied_selection_.sink_topics.empty() ?
     to_topic_info(applied_selection_.topics) : applied_selection_.sink_topics;
-  response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
-  response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
-  response->all_selection_count = static_cast<uint32_t>(last_all_selection_.topics.size());
-  response->last_error = last_error_;
-  response->last_error_stamp = last_error_stamp_;
-  response->reconciling = phase_ == ControllerPhase::BUSY;
-  response->success = true;
-  response->message = "OK";
-}
   response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
   response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
   response->all_selection_count = static_cast<uint32_t>(last_all_selection_.topics.size());
@@ -647,14 +632,6 @@ bool DispatcherControllerNode::switch_mode(
     apply_now ? " and applied selection" : "");
   return true;
 }
-
-bool DispatcherControllerNode::apply_selection(
-  const std::vector<TopicSelection> & topics, std::string & error_out)
-{
-  if (topics.empty()) {
-    error_out = "No topics to apply";
-    return false;
-  }
 
 bool DispatcherControllerNode::apply_selection(
   const std::vector<TopicSelection> & topics, std::string & error_out)
@@ -912,6 +889,31 @@ bool DispatcherControllerNode::should_skip_unavailable_sink(
   error_out = "Unable to reach " + sink_label + " services";
   return false;
 }
+
+std::optional<uint8_t> DispatcherControllerNode::get_kafka_sink_state()
+{
+  return get_sink_state("kafka_sink", get_state_client_);
+}
+
+bool DispatcherControllerNode::change_kafka_sink_state(
+  uint8_t transition_id, const std::string & action, std::string & error_out)
+{
+  return change_sink_state("kafka_sink", change_state_client_, transition_id, action, error_out);
+}
+
+bool DispatcherControllerNode::set_kafka_sink_subscriptions_yaml(
+  const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs, std::string & error_out)
+{
+  return set_sink_subscriptions_yaml("kafka_sink", set_parameters_client_, subs, error_out);
+}
+
+bool DispatcherControllerNode::deactivate_kafka_sink(std::string & error_out)
+{
+  return deactivate_sink(
+    "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_, error_out);
+}
+
+bool DispatcherControllerNode::build_topic_tools_plan(
   const std::vector<TopicSelection> & selection, TopicToolsPlan & plan, std::string & error_out)
 {
   plan.sink_topics.clear();
@@ -1112,7 +1114,6 @@ std::optional<uint8_t> DispatcherControllerNode::get_lifecycle_state(const std::
 
 bool DispatcherControllerNode::change_lifecycle_state(
   const std::string & node_name, uint8_t transition_id, const std::string & action,
->>>>>>> origin/codex/extend-topic-configuration-for-dynamic-tools
   std::string & error_out)
 {
   auto client = create_client<lifecycle_msgs::srv::ChangeState>(
