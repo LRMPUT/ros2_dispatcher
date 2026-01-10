@@ -12,14 +12,12 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>rclcpp_components</depend>
-  <depend>librdkafka-dev</depend>
   <depend>kafka_client</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rmw</depend>
   <depend>rosidl_runtime_cpp</depend>
   <depend>rosidl_typesupport_cpp</depend>
   <depend>rosidl_typesupport_introspection_cpp</depend>
-  <depend>nlohmann_json3</depend>
   <depend>std_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>

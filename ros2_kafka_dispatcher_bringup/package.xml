@@ -16,10 +16,8 @@
   <depend>kafka_sink</depend>
   <depend>introspection_manager</depend>
   <depend>plugin_loader</depend>
-  <depend>processing_plugins</depend>
   <depend>plugin_interfaces</depend>
   <depend>gui_client</depend>
-  <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

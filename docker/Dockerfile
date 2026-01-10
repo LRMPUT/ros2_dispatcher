@@ -2,7 +2,7 @@
 ARG ROS_DISTRO=humble
 ARG IMAGE_SOURCE="https://github.com/ros2-kafka/ros2_kafka_dispatcher"
 
-FROM ros:${ROS_DISTRO}-ros-base AS builder
+FROM ros:${ROS_DISTRO} AS builder
 ARG ROS_DISTRO
 ARG BUILD_DATE
 ARG GIT_SHA
@@ -22,6 +22,10 @@ RUN apt-get update \
       python3-colcon-common-extensions \
       python3-rosdep \
       python3-vcstool \
+      nlohmann-json3-dev \
+      librdkafka-dev \
+      libpaho-mqtt-dev \
+      libpaho-mqttpp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rosdep init || true \
@@ -36,7 +40,7 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
     && colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-FROM ros:${ROS_DISTRO}-ros-base AS runtime
+FROM ros:${ROS_DISTRO} AS runtime
 ARG ROS_DISTRO
 ARG BUILD_DATE
 ARG GIT_SHA

@@ -15,15 +15,12 @@
   <depend>lifecycle_msgs</depend>
   <depend>yaml-cpp</depend>
   <depend>launch_ros</depend>
-  <depend>nlohmann_json3</depend>
   <depend>rosidl_runtime_c</depend>
   <depend>rosidl_typesupport_cpp</depend>
   <depend>rosidl_typesupport_introspection_cpp</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rmw</depend>
   <depend>std_msgs</depend>
-  <depend>paho-mqtt-cpp</depend>
-  <exec_depend>libpaho-mqtt-cpp-dev</exec_depend>
 
   <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>
