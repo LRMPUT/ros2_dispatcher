@@ -33,7 +33,7 @@ add_library(dispatcher_controller_node SHARED
 target_include_directories(dispatcher_controller_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 
 ament_target_dependencies(dispatcher_controller_node
   rclcpp
@@ -63,7 +63,7 @@ install(TARGETS dispatcher_controller_node dispatcher_controller_node_exe
   RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
-  DESTINATION include)
+  DESTINATION include/${PROJECT_NAME})
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/)

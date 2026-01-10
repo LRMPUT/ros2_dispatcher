@@ -21,7 +21,7 @@ target_compile_definitions(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME}
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
     ${RDKAFKA_INCLUDE_DIRS}
 )
 
@@ -39,7 +39,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 install(DIRECTORY include/
-  DESTINATION include
+  DESTINATION include/${PROJECT_NAME}
 )
 
 ament_export_targets(${PROJECT_NAME}_export HAS_LIBRARY_TARGET)
