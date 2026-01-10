@@ -1,13 +1,14 @@
 # ros2_kafka_dispatcher
 
 ## Project Overview
-- ROS 2 packages for discovering active topics, selecting subsets, and forwarding serialized messages to Apache Kafka.
-- Includes lifecycle-managed Kafka sink, dispatcher/controller logic, introspection tooling, and bringup launch files.
+- ROS 2 packages for discovering active topics, selecting subsets, and forwarding serialized messages to Apache Kafka or MQTT.
+- Includes lifecycle-managed Kafka and Mosquitto sinks, dispatcher/controller logic, introspection tooling, and bringup launch files.
 
 ## Architecture / Key Components
 - **introspection_manager** (`introspection_manager/`): Monitors the ROS 2 graph and exposes topic/type listings via the `~/topics_info` publisher and `~/get_topics` service. Configurable defaults in `introspection_manager/config/introspection_manager.param.yaml`. Launch file: `introspection_manager/launch/introspection_manager.launch.py`.
-- **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka sink lifecycle. Supports selection modes `gui` | `file` | `all`, validates topics (optional), and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
+- **dispatcher_controller** (`dispatcher_controller/`): Control-plane node that selects topics and manages the Kafka/Mosquitto sink lifecycles. Supports selection modes `gui` | `file` | `all`, validates topics (optional), and exposes services `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, and `set_selection_mode`. Default parameters set in `dispatcher_controller/src/dispatcher_controller_node.cpp` and `dispatcher_controller/launch/dispatcher_controller.launch.py`. Example selection YAML at `dispatcher_controller/config/topics.yaml`.
 - **kafka_sink** (`kafka_bridge/kafka_sink/`): Lifecycle node that subscribes to configured topics and forwards payloads to Kafka using `kafka_client`. Parameters (e.g., `subscriptions_yaml`, `kafka.bootstrap_servers`, QoS depth) are defined in `kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`. Launch file: `kafka_bridge/kafka_sink/launch/kafka_sink_container.launch.py`.
+- **mosquitto_sink** (`mosquitto_bridge/mosquitto_sink/`): Lifecycle node that subscribes to configured topics and forwards payloads to MQTT using the Paho MQTT C++ client. Parameters (e.g., `subscriptions_yaml`, `mqtt.broker_host`, QoS depth) are defined in `mosquitto_bridge/mosquitto_sink/config/mosquitto_sink.param.yaml`. Launch file: `mosquitto_bridge/mosquitto_sink/launch/mosquitto_sink_container.launch.py`.
 
 ## Consuming CDR payloads
 
@@ -37,6 +38,7 @@ When `kafka_sink` runs with `kafka.payload_format:=cdr` (default), Kafka message
     selection_mode:=file \
     selection_file_path:="" \
     kafka_sink_node_name:=/kafka_sink \
+    mosquitto_sink_node_name:=/mosquitto_sink \
     validate_topics:=false \
     subscriptions_yaml:="" \
     qos_depth:=10 \
@@ -61,7 +63,7 @@ When `kafka_sink` runs with `kafka.payload_format:=cdr` (default), Kafka message
 
 ## Configuration
 - **Dispatcher controller parameters** (declare defaults in `dispatcher_controller/src/dispatcher_controller_node.cpp`):
-  - `selection_mode` (`gui`|`file`|`all`), `selection_file_path`, `auto_apply_on_mode_change`, `validate_topics`, `kafka_sink_node_name`, `introspection_service_name`, `introspection_node_name`, `disable_introspection_after_apply`, `all_mode_max_topics`, `all_mode_allowlist`, `all_mode_denylist`, `all_mode_hide_rosout`.
+  - `selection_mode` (`gui`|`file`|`all`), `selection_file_path`, `auto_apply_on_mode_change`, `allow_missing_sinks`, `validate_topics`, `kafka_sink_node_name`, `mosquitto_sink_node_name`, `introspection_service_name`, `introspection_node_name`, `disable_introspection_after_apply`, `all_mode_max_topics`, `all_mode_allowlist`, `all_mode_denylist`, `all_mode_hide_rosout`.
   - Services exposed: `apply_selection`, `reload_selection`, `stop_streaming`, `get_status`, `set_selection_mode`.
 - **Kafka sink parameters** (`kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`):
   - Subscription/QoS: `qos_depth`, `subscriptions_yaml`.
@@ -69,7 +71,7 @@ When `kafka_sink` runs with `kafka.payload_format:=cdr` (default), Kafka message
 - **Introspection manager parameters** (`introspection_manager/config/introspection_manager.param.yaml`):
   - `publisher_queue_depth`, `publisher_reliability`, `publisher_durability`, `publish_on_change`, `filter_hidden`, `introspection_enabled`.
 - **Bringup launch arguments** (`ros2_kafka_dispatcher_bringup/launch/system_minimal.launch.py`):
-  - `selection_mode`, `selection_file_path`, `kafka_sink_node_name`, `validate_topics`, `subscriptions_yaml`, `qos_depth`, `controller_log_level`, `kafka_sink_log_level`, `introspection_manager_param_file`, `introspection_manager_log_level`.
+  - `selection_mode`, `selection_file_path`, `kafka_sink_node_name`, `mosquitto_sink_node_name`, `validate_topics`, `subscriptions_yaml`, `qos_depth`, `controller_log_level`, `kafka_sink_log_level`, `mosquitto_sink_log_level`, `enable_kafka_sink`, `enable_mosquitto_sink`, `introspection_manager_param_file`, `introspection_manager_log_level`.
 
 ## Limitations / Known Gaps
 - No GUI client is included in this repository; selection mode `gui` requires an external client.

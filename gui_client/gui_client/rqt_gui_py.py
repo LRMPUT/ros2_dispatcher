@@ -144,6 +144,7 @@ class IntrospectionPlugin(Plugin):
         self._status_fields_order = [
             ("Selection mode", "selection_mode"),
             ("Kafka sink state", "kafka_sink_state"),
+            ("Mosquitto sink state", "mosquitto_sink_state"),
             ("Streaming active", "streaming_active"),
             ("Reconciling", "reconciling"),
             ("Applied topics", "applied_topics_count"),
@@ -563,6 +564,7 @@ class IntrospectionPlugin(Plugin):
             current_snapshot = {
                 "selection_mode": str(getattr(response, 'selection_mode', '-')),
                 "kafka_sink_state": str(getattr(response, 'kafka_sink_state', '-')),
+                "mosquitto_sink_state": str(getattr(response, 'mosquitto_sink_state', '-')),
                 "streaming_active": str(bool(getattr(response, 'streaming_active', False))),
                 "reconciling": str(bool(getattr(response, 'reconciling', False))),
                 "applied_topics_count": str(len(applied_topics)),
@@ -601,6 +603,7 @@ class IntrospectionPlugin(Plugin):
             status_lines = [
                 f"Selection mode: {getattr(response, 'selection_mode', '-')}",
                 f"kafka_sink_state: {getattr(response, 'kafka_sink_state', '-')}",
+                f"mosquitto_sink_state: {getattr(response, 'mosquitto_sink_state', '-')}",
                 f"Streaming active: {getattr(response, 'streaming_active', False)}",
                 f"Reconciling: {getattr(response, 'reconciling', False)}",
                 f"GUI cache count: {getattr(response, 'gui_selection_count', 0)}",

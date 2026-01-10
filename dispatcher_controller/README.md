@@ -1,6 +1,6 @@
 # dispatcher_controller
 
-Control-plane node that orchestrates ROS 2 to Kafka streaming pipelines by managing the lifecycle of the `kafka_sink` component and coordinating pipeline selections from multiple sources (GUI/file/introspection). For the system-wide architecture, see the root [README](../README.md); for a beginner-friendly walkthrough, see [`docs/getting_started.md`](../docs/getting_started.md).
+Control-plane node that orchestrates ROS 2 streaming pipelines by managing the lifecycle of the `kafka_sink` and `mosquitto_sink` components and coordinating pipeline selections from multiple sources (GUI/file/introspection). For the system-wide architecture, see the root [README](../README.md); for a beginner-friendly walkthrough, see [`docs/getting_started.md`](../docs/getting_started.md).
 
 ## Build
 
@@ -12,9 +12,11 @@ source install/setup.bash
 ## Parameters
 
 - `kafka_sink_node_name` (string, default `/kafka_sink`): Target kafka_sink node name.
+- `mosquitto_sink_node_name` (string, default `/mosquitto_sink`): Target mosquitto_sink node name (set empty to disable).
 - `selection_mode` (string, default `gui`): `gui` | `file` | `all`.
 - `selection_file_path` (string): Path to YAML selection when in `file` mode.
 - `auto_apply_on_mode_change` (bool, default `true`): Apply immediately on mode switch.
+- `allow_missing_sinks` (bool, default `true`): If true, skip sinks whose lifecycle services are unavailable.
 - `validate_topics` (bool, default `false`): Validate topics via introspection before applying.
 - `introspection_service_name` (string, default `/introspection_manager/get_topics`): Service used for topic validation/discovery.
 - `disable_introspection_after_apply` (bool, default `true`): Optionally disable introspection after applying a selection.
@@ -24,25 +26,25 @@ source install/setup.bash
 
 - `apply_selection` (`dispatcher_controller/srv/ApplySelection`): GUI-driven selection; valid only in `gui` mode.
 - `reload_selection` (`dispatcher_controller/srv/ReloadSelection`): Reloads current mode source (file/all/gui cache) and optionally applies.
-- `stop_streaming` (`dispatcher_controller/srv/StopStreaming`): Deactivates `kafka_sink`; optional cache reset.
-- `get_status` (`dispatcher_controller/srv/GetStatus`): Reports mode, kafka_sink lifecycle, active selection, cached counts, and last error.
+- `stop_streaming` (`dispatcher_controller/srv/StopStreaming`): Deactivates `kafka_sink` and `mosquitto_sink`; optional cache reset.
+- `get_status` (`dispatcher_controller/srv/GetStatus`): Reports mode, sink lifecycles, active selection, cached counts, and last error.
 - `set_selection_mode` (`dispatcher_controller/srv/SetSelectionMode`): Switches between `gui` | `file` | `all`, optionally applying immediately.
 
-## kafka_sink lifecycle interactions
+## Sink lifecycle interactions
 
-The controller uses lifecycle services:
+The controller uses lifecycle services for each sink:
 - `/<kafka_sink_name>/change_state` (`lifecycle_msgs/srv/ChangeState`)
 - `/<kafka_sink_name>/get_state` (`lifecycle_msgs/srv/GetState`)
 and sets parameter `subscriptions_yaml` via `/<kafka_sink_name>/set_parameters` (`rcl_interfaces/srv/SetParameters`).
 
-## How the controller manages kafka_sink lifecycle
+## How the controller manages sink lifecycles
 
-When you apply a selection (from any source), the dispatcher_controller orchestrates kafka_sink through these transitions:
+When you apply a selection (from any source), the dispatcher_controller orchestrates each sink through these transitions:
 
 1. **Check current state** → Query `/kafka_sink/get_state`
 2. **Deactivate if active** → Send `TRANSITION_DEACTIVATE` if currently in `ACTIVE` state
 3. **Configure if unconfigured** → Send `TRANSITION_CONFIGURE` if in `UNCONFIGURED` state
-4. **Set subscriptions** → Update kafka_sink parameter `subscriptions_yaml` with the topic list (name + type)
+4. **Set subscriptions** → Update sink parameter `subscriptions_yaml` with the topic list (name + type)
 5. **Activate** → Send `TRANSITION_ACTIVATE` to start streaming
 6. **Optionally disable introspection** → If `disable_introspection_after_apply=true`, disable the introspection_manager
 
@@ -86,7 +88,7 @@ The controller infers missing topic message types in two scenarios:
    ```bash
    ros2 service call /get_status dispatcher_controller/srv/GetStatus "{}"
    ```
-   Expect `kafka_sink_state: active` and `applied_topics` matching your YAML.
+   Expect `kafka_sink_state: active`, `mosquitto_sink_state: active`, and `applied_topics` matching your YAML.
 
 ### File mode without introspection dependency
 
@@ -140,7 +142,7 @@ ros2 service call /set_selection_mode dispatcher_controller/srv/SetSelectionMode
   "{selection_mode: 'file', selection_file_path: '/path/to/topics.yaml', apply_now: true}"
 ```
 
-**Note**: `apply_now: true` triggers the full pipeline (load → infer types → configure kafka_sink → activate).
+**Note**: `apply_now: true` triggers the full pipeline (load → infer types → configure sinks → activate).
 
 Switch to all mode to discover all topics:
 
@@ -160,7 +162,7 @@ ros2 service call /reload_selection dispatcher_controller/srv/ReloadSelection \
 
 ### Stop streaming and reset state
 
-Deactivate kafka_sink and clear cached selections:
+Deactivate sinks and clear cached selections:
 
 ```bash
 ros2 service call /stop_streaming dispatcher_controller/srv/StopStreaming \

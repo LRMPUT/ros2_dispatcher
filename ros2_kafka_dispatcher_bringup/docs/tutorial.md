@@ -1,10 +1,10 @@
 # ros2_kafka_dispatcher_bringup Tutorial
 
-This tutorial walks through running the minimal dispatcher + Kafka sink system, explains key parameters, and includes troubleshooting tips.
+This tutorial walks through running the minimal dispatcher + Kafka/Mosquitto sink system, explains key parameters, and includes troubleshooting tips.
 
 ## Prerequisites
 - Build the workspace (including dependencies) and source the overlay.
-- Ensure Kafka sink dependencies are satisfied (Kafka brokers reachable, etc.).
+- Ensure Kafka and Mosquitto sink dependencies are satisfied (Kafka brokers and MQTT broker reachable, etc.).
 - If you plan to enable topic validation or `all` mode discovery, have `introspection_manager` available.
 
 ## 1. Launch the minimal system (file mode)
@@ -16,8 +16,9 @@ ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
 ```
 
 What starts:
-- `dispatcher_controller` (manages selections and the Kafka sink lifecycle)
+- `dispatcher_controller` (manages selections and sink lifecycles)
 - `kafka_sink` (lifecycle node that streams topics to Kafka)
+- `mosquitto_sink` (lifecycle node that streams topics to MQTT)
 
 ## 2. Common overrides
 - Change selection file:
@@ -34,7 +35,7 @@ What starts:
   ```
 - Increase logging verbosity:
   ```bash
-  controller_log_level:=debug kafka_sink_log_level:=debug
+  controller_log_level:=debug kafka_sink_log_level:=debug mosquitto_sink_log_level:=debug
   ```
 
 ## 3. Selection file format
@@ -74,11 +75,12 @@ controller_log_level:=debug kafka_sink_log_level:=debug
 
 ## 7. Troubleshooting checklist
 - **No Kafka messages**: Verify `kafka_sink` lifecycle state is `active` (`ros2 lifecycle get /kafka_sink`), ensure brokers/topics reachable, and check `subscriptions_yaml` is populated (via `ros2 param get /kafka_sink subscriptions_yaml`).
+- **No MQTT messages**: Verify `mosquitto_sink` lifecycle state is `active` (`ros2 lifecycle get /mosquitto_sink`), ensure your MQTT broker is reachable, and check `subscriptions_yaml` is populated (via `ros2 param get /mosquitto_sink subscriptions_yaml`).
 - **Selection not applied**: Confirm `dispatcher_controller` logs (set `controller_log_level:=debug`), ensure `selection_file_path` exists and is readable, and that `selection_mode` matches your intent (`file|gui|all`).
 - **Validation failures**: Make sure `introspection_manager` is running when `validate_topics:=true` or when using `all` mode. Check `introspection_service_name` parameter if using a non-default service name.
 - **Composition issues**: If using `system_composed`, ensure the container process is alive and that `rclcpp_components` is in the environment. Try standalone mode (`system_minimal`) to compare behavior.
 
 ## 8. Useful commands
-- Check node states: `ros2 node list`, `ros2 lifecycle get /kafka_sink`
+- Check node states: `ros2 node list`, `ros2 lifecycle get /kafka_sink`, `ros2 lifecycle get /mosquitto_sink`
 - Inspect parameters: `ros2 param list /dispatcher_controller`, `ros2 param get /dispatcher_controller selection_mode`
 - Watch logs with higher verbosity: set `controller_log_level:=debug kafka_sink_log_level:=debug`

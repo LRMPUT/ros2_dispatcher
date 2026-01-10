@@ -1,6 +1,6 @@
 # ros2_kafka_dispatcher_bringup
 
-Launcher and configuration package for bringing up the ros2_kafka_dispatcher system. It provides launch files and default parameter YAMLs for starting the dispatcher controller and kafka sink nodes in either standalone or composed setups. For the architecture overview see the root [README](../README.md).
+Launcher and configuration package for bringing up the ros2_kafka_dispatcher system. It provides launch files and default parameter YAMLs for starting the dispatcher controller plus Kafka and Mosquitto sink nodes in either standalone or composed setups. For the architecture overview see the root [README](../README.md).
 
 ## Build
 
@@ -15,6 +15,11 @@ colcon build --symlink-install --packages-up-to ros2_kafka_dispatcher_bringup
   ```bash
   ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py
   ```
+- **Kafka-only or Mosquitto-only bringup**
+  ```bash
+  ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
+    enable_kafka_sink:=true enable_mosquitto_sink:=false
+  ```
 - **File-selection mode**
   ```bash
   ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
@@ -26,7 +31,8 @@ colcon build --symlink-install --packages-up-to ros2_kafka_dispatcher_bringup
     selection_mode:=file \
     selection_file_path:=/path/to/selection.yaml \
     controller_log_level:=debug \
-    kafka_sink_log_level:=debug
+    kafka_sink_log_level:=debug \
+    mosquitto_sink_log_level:=debug
   ```
 - **Composable container bringup (single process)**
   ```bash

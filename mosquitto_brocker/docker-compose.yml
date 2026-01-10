@@ -1,0 +1,7 @@
+version: "3.8"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "${MOSQUITTO_PORT:-1884}:1883"

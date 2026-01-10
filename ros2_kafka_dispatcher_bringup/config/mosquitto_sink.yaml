@@ -1,0 +1,30 @@
+mosquitto_sink:
+  ros__parameters:
+    qos_depth: 10
+    subscriptions_yaml: |
+      - topic_name: /demo/chatter
+        msg_type: std_msgs/msg/String
+        mqtt_name: custom/mqtt/topic
+      - topic_name: /demo/number
+        msg_type: std_msgs/msg/Int32
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "mosquitto_sink/metrics"
+    mqtt.broker_host: "localhost"
+    mqtt.broker_port: 1883
+    mqtt.client_id: "mosquitto_sink"
+    mqtt.username: ""
+    mqtt.password: ""
+    mqtt.qos: 1
+    mqtt.retain: false
+    mqtt.keep_alive_seconds: 60
+    mqtt.topic_prefix: "ros2"
+    mqtt.topic_mapping_mode: "prefix_ros_topic"
+    mqtt.fixed_topic: "ros2/raw"
+    mqtt.payload_format: "cdr"
+    mqtt.use_tls: false
+    mqtt.ca_cert_path: ""
+    mqtt.lwt_topic: ""
+    mqtt.lwt_payload: "mosquitto_sink disconnected"
+    mqtt.lwt_qos: 1
+    mqtt.lwt_retain: false
