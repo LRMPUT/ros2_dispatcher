@@ -1,6 +1,6 @@
 # Getting started (beginner friendly)
 
-This guide walks through a minimal setup to explore `ros2_kafka_dispatcher`, from installing dependencies to streaming a couple of ROS 2 topics into Kafka.
+This guide walks through a minimal setup to explore `ros2_kafka_dispatcher`, from installing dependencies to streaming a couple of ROS 2 topics into Kafka and MQTT.
 
 ## Prerequisites
 - ROS 2 workspace with `colcon` and common build tools.
@@ -30,9 +30,9 @@ ros2 launch ros2_kafka_dispatcher_bringup system_minimal.launch.py \
 ```
 
 What this does:
-- Spins up the `dispatcher_controller` and `kafka_sink` nodes.
+- Spins up the `dispatcher_controller`, `kafka_sink`, and `mosquitto_sink` nodes.
 - Loads a small selection of topics from the provided YAML file.
-- Activates the Kafka sink lifecycle so messages start flowing to Kafka.
+- Activates sink lifecycles so messages start flowing to Kafka and MQTT.
 
 ## Verify the pipeline
 - Check controller status:
@@ -51,7 +51,7 @@ What this does:
 - **Disable hidden topics:** In the introspection manager, set `filter_hidden:=true` (default) to ignore topics with name segments starting with `_`.
 
 ## Troubleshooting tips
-- If `kafka_sink` stays inactive, call `get_status` to inspect lifecycle state and last error messages.
+- If `kafka_sink` or `mosquitto_sink` stays inactive, call `get_status` to inspect lifecycle state and last error messages.
 - When types are missing from your YAML selection, ensure the `introspection_manager` node is running so the controller can infer message types.
 - Use `selection_mode:=all` cautiously; set `all_mode_max_topics` to protect the sink from excessive subscriptions in dense graphs.
 

@@ -19,6 +19,8 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   client_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   kafka_sink_node_name_ = declare_parameter<std::string>("kafka_sink_node_name", "/kafka_sink");
+  mosquitto_sink_node_name_ =
+    declare_parameter<std::string>("mosquitto_sink_node_name", "/mosquitto_sink");
   introspection_service_name_ = declare_parameter<std::string>(
     "introspection_service_name", "/introspection_manager/get_topics");
   introspection_node_name_ =
@@ -28,6 +30,7 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     declare_parameter<bool>("disable_introspection_after_apply", true);
   selection_file_path_ = declare_parameter<std::string>("selection_file_path", "");
   auto_apply_on_mode_change_ = declare_parameter<bool>("auto_apply_on_mode_change", true);
+  allow_missing_sinks_ = declare_parameter<bool>("allow_missing_sinks", true);
   all_mode_max_topics_ = declare_parameter<int>("all_mode_max_topics", 200);
   all_mode_allowlist_ = declare_parameter<std::vector<std::string>>(
     "all_mode_allowlist", std::vector<std::string>{});
@@ -49,6 +52,17 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     kafka_sink_node_name_ + "/get_state", rmw_qos_profile_services_default, client_cb_group_);
   set_parameters_client_ = create_client<rcl_interfaces::srv::SetParameters>(
     kafka_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
+  if (!mosquitto_sink_node_name_.empty()) {
+    mosquitto_change_state_client_ = create_client<lifecycle_msgs::srv::ChangeState>(
+      mosquitto_sink_node_name_ + "/change_state", rmw_qos_profile_services_default,
+      client_cb_group_);
+    mosquitto_get_state_client_ = create_client<lifecycle_msgs::srv::GetState>(
+      mosquitto_sink_node_name_ + "/get_state", rmw_qos_profile_services_default,
+      client_cb_group_);
+    mosquitto_set_parameters_client_ = create_client<rcl_interfaces::srv::SetParameters>(
+      mosquitto_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default,
+      client_cb_group_);
+  }
   introspection_client_ = create_client<introspection_manager_msgs::srv::GetTopics>(
     introspection_service_name_, rmw_qos_profile_services_default, client_cb_group_);
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
@@ -84,8 +98,9 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     std::bind(&DispatcherControllerNode::on_param_change, this, std::placeholders::_1));
 
   RCLCPP_INFO(
-    get_logger(), "dispatcher_controller started in mode [%s], kafka_sink [%s]",
-    mode_to_string(selection_mode_).c_str(), kafka_sink_node_name_.c_str());
+    get_logger(), "dispatcher_controller started in mode [%s], kafka_sink [%s], mosquitto_sink [%s]",
+    mode_to_string(selection_mode_).c_str(), kafka_sink_node_name_.c_str(),
+    mosquitto_sink_node_name_.c_str());
 }
 
 rcl_interfaces::msg::SetParametersResult DispatcherControllerNode::on_param_change(
@@ -309,7 +324,20 @@ void DispatcherControllerNode::handle_stop_streaming(
   }
 
   std::string error;
-  if (!deactivate_kafka_sink(error)) {
+  if (!deactivate_sink(
+      "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_, error))
+  {
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = error;
+    last_error_stamp_ = now();
+    response->success = false;
+    response->message = error;
+    return;
+  }
+  if (!deactivate_sink(
+      "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
+      mosquitto_get_state_client_, error))
+  {
     phase_ = ControllerPhase::ERROR;
     last_error_ = error;
     last_error_stamp_ = now();
@@ -336,10 +364,26 @@ void DispatcherControllerNode::handle_get_status(
 {
   std::lock_guard<std::mutex> lock(mutex_);
   response->selection_mode = mode_to_string(selection_mode_);
-  auto state = get_kafka_sink_state();
-  response->kafka_sink_state = state ? (state_string(*state)) : "unknown";
-  response->streaming_active = state &&
-    *state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
+  auto kafka_state = get_sink_state("kafka_sink", get_state_client_);
+  response->kafka_sink_state = kafka_state ? (state_string(*kafka_state)) : "unknown";
+  std::optional<uint8_t> mosquitto_state;
+  if (!mosquitto_sink_node_name_.empty()) {
+    mosquitto_state = get_sink_state("mosquitto_sink", mosquitto_get_state_client_);
+    response->mosquitto_sink_state =
+      mosquitto_state ? (state_string(*mosquitto_state)) : "unknown";
+  } else {
+    response->mosquitto_sink_state = "disabled";
+  }
+  bool streaming_active = false;
+  if (!kafka_sink_node_name_.empty()) {
+    streaming_active = streaming_active || (kafka_state &&
+      *kafka_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  }
+  if (!mosquitto_sink_node_name_.empty()) {
+    streaming_active = streaming_active || (mosquitto_state &&
+      *mosquitto_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+  }
+  response->streaming_active = streaming_active;
   response->applied_topics = applied_selection_.topics;
   response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
   response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
@@ -422,33 +466,6 @@ bool DispatcherControllerNode::apply_selection(
     return false;
   }
 
-  auto state = get_kafka_sink_state();
-  if (!state) {
-    error_out = "Unable to get kafka_sink state";
-    return false;
-  }
-
-  if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
-    if (!change_kafka_sink_state(
-        lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE, "deactivate", error_out))
-    {
-      return false;
-    }
-    state = get_kafka_sink_state();
-    if (!state) {
-      error_out = "Failed to confirm kafka_sink state after deactivate";
-      return false;
-    }
-  }
-
-  if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED) {
-    if (!change_kafka_sink_state(
-        lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE, "configure", error_out))
-    {
-      return false;
-    }
-  }
-
   if (validate_topics_) {
     auto copy = topics;
     if (!infer_missing_types(copy, error_out)) {
@@ -456,12 +473,16 @@ bool DispatcherControllerNode::apply_selection(
     }
   }
 
-  if (!set_kafka_sink_subscriptions_yaml(topics, error_out)) {
+  if (!apply_selection_to_sink(
+      "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_,
+      set_parameters_client_, topics, error_out))
+  {
     return false;
   }
 
-  if (!change_kafka_sink_state(
-      lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE, "activate", error_out))
+  if (!apply_selection_to_sink(
+      "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
+      mosquitto_get_state_client_, mosquitto_set_parameters_client_, topics, error_out))
   {
     return false;
   }
@@ -479,85 +500,179 @@ bool DispatcherControllerNode::apply_selection(
   return true;
 }
 
-bool DispatcherControllerNode::deactivate_kafka_sink(std::string & error_out)
+bool DispatcherControllerNode::apply_selection_to_sink(
+  const std::string & sink_label,
+  const std::string & sink_node_name,
+  const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+  const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client,
+  const rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr & set_parameters_client,
+  const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs,
+  std::string & error_out)
 {
-  auto state = get_kafka_sink_state();
+  if (sink_node_name.empty()) {
+    return true;
+  }
+
+  auto state = get_sink_state(sink_label, get_state_client);
   if (!state) {
-    error_out = "Unable to get kafka_sink state";
+    return should_skip_unavailable_sink(sink_label, error_out);
+  }
+
+  if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+    if (!change_sink_state(
+        sink_label, change_state_client,
+        lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE, "deactivate", error_out))
+    {
+      return false;
+    }
+    state = get_sink_state(sink_label, get_state_client);
+    if (!state) {
+      error_out = "Failed to confirm " + sink_label + " state after deactivate";
+      return false;
+    }
+  }
+
+  if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED) {
+    if (!change_sink_state(
+        sink_label, change_state_client,
+        lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE, "configure", error_out))
+    {
+      return false;
+    }
+  }
+
+  if (!set_sink_subscriptions_yaml(sink_label, set_parameters_client, subs, error_out)) {
     return false;
   }
+
+  if (!change_sink_state(
+      sink_label, change_state_client,
+      lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE, "activate", error_out))
+  {
+    return false;
+  }
+
+  return true;
+}
+
+bool DispatcherControllerNode::deactivate_sink(
+  const std::string & sink_label,
+  const std::string & sink_node_name,
+  const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+  const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client,
+  std::string & error_out)
+{
+  if (sink_node_name.empty()) {
+    return true;
+  }
+
+  auto state = get_sink_state(sink_label, get_state_client);
+  if (!state) {
+    return should_skip_unavailable_sink(sink_label, error_out);
+  }
   if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
-    return change_kafka_sink_state(
+    return change_sink_state(
+      sink_label, change_state_client,
       lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE, "deactivate", error_out);
   }
   return true;
 }
 
-std::optional<uint8_t> DispatcherControllerNode::get_kafka_sink_state()
+std::optional<uint8_t> DispatcherControllerNode::get_sink_state(
+  const std::string & sink_label,
+  const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client)
 {
-  if (!get_state_client_->wait_for_service(service_timeout_)) {
-    RCLCPP_WARN(get_logger(), "get_state service not available");
+  if (!get_state_client) {
+    RCLCPP_WARN(get_logger(), "%s get_state client not initialized", sink_label.c_str());
+    return std::nullopt;
+  }
+  if (!get_state_client->wait_for_service(service_timeout_)) {
+    RCLCPP_WARN(
+      get_logger(), "%s get_state service not available", sink_label.c_str());
     return std::nullopt;
   }
 
   auto request = std::make_shared<lifecycle_msgs::srv::GetState::Request>();
-  auto future = get_state_client_->async_send_request(request);
+  auto future = get_state_client->async_send_request(request);
   auto status = future.wait_for(service_timeout_);
   if (status != std::future_status::ready) {
-    RCLCPP_WARN(get_logger(), "Timeout waiting for kafka_sink state");
+    RCLCPP_WARN(get_logger(), "Timeout waiting for %s state", sink_label.c_str());
     return std::nullopt;
   }
   return future.get()->current_state.id;
 }
 
-bool DispatcherControllerNode::change_kafka_sink_state(
+bool DispatcherControllerNode::change_sink_state(
+  const std::string & sink_label,
+  const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
   uint8_t transition_id, const std::string & action, std::string & error_out)
 {
-  if (!change_state_client_->wait_for_service(service_timeout_)) {
-    error_out = "change_state service not available";
+  if (!change_state_client) {
+    error_out = sink_label + " change_state client not initialized";
+    return false;
+  }
+  if (!change_state_client->wait_for_service(service_timeout_)) {
+    error_out = sink_label + " change_state service not available";
     return false;
   }
 
   auto request = std::make_shared<lifecycle_msgs::srv::ChangeState::Request>();
   request->transition.id = transition_id;
-  auto future = change_state_client_->async_send_request(request);
+  auto future = change_state_client->async_send_request(request);
   if (future.wait_for(service_timeout_) != std::future_status::ready) {
-    error_out = "Timeout during kafka_sink " + action;
+    error_out = "Timeout during " + sink_label + " " + action;
     return false;
   }
   auto response = future.get();
   if (!response->success) {
-    error_out = "kafka_sink rejected transition " + action;
+    error_out = sink_label + " rejected transition " + action;
     return false;
   }
-  RCLCPP_INFO(get_logger(), "kafka_sink %s succeeded", action.c_str());
+  RCLCPP_INFO(get_logger(), "%s %s succeeded", sink_label.c_str(), action.c_str());
   return true;
 }
 
-bool DispatcherControllerNode::set_kafka_sink_subscriptions_yaml(
-  const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs, std::string & error_out)
+bool DispatcherControllerNode::set_sink_subscriptions_yaml(
+  const std::string & sink_label,
+  const rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr & set_parameters_client,
+  const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs,
+  std::string & error_out)
 {
-  if (!set_parameters_client_->wait_for_service(service_timeout_)) {
-    error_out = "set_parameters service not available";
-    return false;
+  if (!set_parameters_client) {
+    return should_skip_unavailable_sink(sink_label, error_out);
+  }
+  if (!set_parameters_client->wait_for_service(service_timeout_)) {
+    return should_skip_unavailable_sink(sink_label, error_out);
   }
   auto request = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
   rclcpp::Parameter param("subscriptions_yaml", topics_to_yaml(subs));
   request->parameters.push_back(param.to_parameter_msg());
-  auto future = set_parameters_client_->async_send_request(request);
+  auto future = set_parameters_client->async_send_request(request);
   if (future.wait_for(service_timeout_) != std::future_status::ready) {
-    error_out = "Timeout setting subscriptions_yaml";
+    error_out = "Timeout setting " + sink_label + " subscriptions_yaml";
     return false;
   }
   auto response = future.get();
   for (const auto & result : response->results) {
     if (!result.successful) {
-      error_out = "Failed to set subscriptions_yaml: " + result.reason;
+      error_out = "Failed to set " + sink_label + " subscriptions_yaml: " + result.reason;
       return false;
     }
   }
-  RCLCPP_INFO(get_logger(), "Updated kafka_sink subscriptions_yaml with %zu entries", subs.size());
+  RCLCPP_INFO(get_logger(), "Updated %s subscriptions_yaml with %zu entries",
+    sink_label.c_str(), subs.size());
   return true;
+}
+
+bool DispatcherControllerNode::should_skip_unavailable_sink(
+  const std::string & sink_label, std::string & error_out) const
+{
+  if (allow_missing_sinks_) {
+    RCLCPP_WARN(get_logger(), "Skipping %s because services are unavailable", sink_label.c_str());
+    return true;
+  }
+  error_out = "Unable to reach " + sink_label + " services";
+  return false;
 }
 
 bool DispatcherControllerNode::load_file_selection(

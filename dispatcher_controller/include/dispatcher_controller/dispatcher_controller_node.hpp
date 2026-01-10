@@ -79,12 +79,33 @@ private:
     std::string & error_out);
   bool apply_selection(const std::vector<introspection_manager_msgs::msg::TopicInfo> & topics,
     std::string & error_out);
-  bool deactivate_kafka_sink(std::string & error_out);
-  std::optional<uint8_t> get_kafka_sink_state();
-  bool change_kafka_sink_state(uint8_t transition_id, const std::string & action,
+  bool apply_selection_to_sink(
+    const std::string & sink_label,
+    const std::string & sink_node_name,
+    const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+    const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client,
+    const rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr & set_parameters_client,
+    const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs,
     std::string & error_out);
-  bool set_kafka_sink_subscriptions_yaml(
-    const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs, std::string & error_out);
+  bool deactivate_sink(
+    const std::string & sink_label,
+    const std::string & sink_node_name,
+    const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+    const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client,
+    std::string & error_out);
+  std::optional<uint8_t> get_sink_state(
+    const std::string & sink_label,
+    const rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr & get_state_client);
+  bool change_sink_state(
+    const std::string & sink_label,
+    const rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr & change_state_client,
+    uint8_t transition_id, const std::string & action, std::string & error_out);
+  bool set_sink_subscriptions_yaml(
+    const std::string & sink_label,
+    const rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr & set_parameters_client,
+    const std::vector<introspection_manager_msgs::msg::TopicInfo> & subs,
+    std::string & error_out);
+  bool should_skip_unavailable_sink(const std::string & sink_label, std::string & error_out) const;
 
   // Selection helpers
   bool load_file_selection(const std::string & path,
@@ -113,6 +134,9 @@ private:
   rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr change_state_client_;
   rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr get_state_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr set_parameters_client_;
+  rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr mosquitto_change_state_client_;
+  rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr mosquitto_get_state_client_;
+  rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr mosquitto_set_parameters_client_;
   rclcpp::Client<introspection_manager_msgs::srv::GetTopics>::SharedPtr introspection_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr introspection_param_client_;
 
@@ -122,12 +146,14 @@ private:
 
   // Parameters
   std::string kafka_sink_node_name_;
+  std::string mosquitto_sink_node_name_;
   std::string introspection_service_name_;
   std::string introspection_node_name_;
   bool validate_topics_;
   bool disable_introspection_after_apply_;
   std::string selection_file_path_;
   bool auto_apply_on_mode_change_;
+  bool allow_missing_sinks_;
   size_t all_mode_max_topics_;
   std::vector<std::string> all_mode_allowlist_;
   std::vector<std::string> all_mode_denylist_;

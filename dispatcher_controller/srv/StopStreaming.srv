@@ -1,4 +1,4 @@
-# Deactivate kafka_sink; optionally reset cached selections.
+# Deactivate kafka_sink and mosquitto_sink; optionally reset cached selections.
 bool reset_cached
 ---
 bool success
