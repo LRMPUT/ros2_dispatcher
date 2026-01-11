@@ -1,7 +1,7 @@
 from rqt_gui_py.plugin import Plugin
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox,
-    QStyledItemDelegate, QComboBox, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem
+    QStyledItemDelegate, QComboBox, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem, QDialog, QDialogButtonBox
 )
 from PyQt5.QtGui import QColor, QPainter, QBrush
 from PyQt5.QtCore import QTimer, QRect, Qt, QMetaObject, Q_ARG
@@ -15,6 +15,136 @@ from introspection_manager_msgs.srv import GetTopics
 from introspection_manager_msgs.msg import TopicInfo
 from dispatcher_controller.srv import ApplySelection, ReloadSelection, SetSelectionMode, StopStreaming
 from dispatcher_controller.srv import GetStatus as GetControllerStatus
+
+class TopicToolsDialog(QDialog):
+    def __init__(self, topics, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Topic Tools")
+        self.setModal(True)
+        self.topics = topics  # list of dicts with 'name', 'type'
+        self.tool_configs = {}  # topic_name -> {'tool': str, 'params': dict}
+        
+        layout = QVBoxLayout(self)
+        
+        self.table = QTableWidget(len(topics), 3)
+        self.table.setHorizontalHeaderLabels(["Topic", "Tool", "Parameters"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionMode(QTableWidget.NoSelection)
+        #row is too small, please change size
+        self.table.verticalHeader().setDefaultSectionSize(70)  # Set row height
+        
+        for row, topic in enumerate(topics):
+            # Topic name
+            name_item = QTableWidgetItem(topic['name'])
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 0, name_item)
+            
+            # Tool combo
+            combo = QComboBox()
+            combo.addItems(["None", "Throttle", "Drop", "Delay"])
+            combo.currentTextChanged.connect(lambda text, r=row: self._on_tool_changed(r, text))
+            self.table.setCellWidget(row, 1, combo)
+            
+            # Parameters table
+            params_table = QTableWidget(0, 2)
+            params_table.setHorizontalHeaderLabels(["Parameter", "Value"])
+            params_table.horizontalHeader().setStretchLastSection(True)
+            params_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            params_table.setSelectionMode(QTableWidget.NoSelection)
+            params_table.setMaximumHeight(250)  # Increased height
+            params_table.verticalHeader().setDefaultSectionSize(70)  # Set row height
+            self.table.setCellWidget(row, 2, params_table)
+            
+            # Store initial
+            self.tool_configs[topic['name']] = {'tool': 'None', 'params': {}}
+        
+        layout.addWidget(self.table)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+        self.resize(700, 500)
+    
+    def _on_tool_changed(self, row, tool):
+        params_table = self.table.cellWidget(row, 2)
+        topic_name = self.table.item(row, 0).text()
+        self.tool_configs[topic_name]['tool'] = tool
+        self.tool_configs[topic_name]['params'] = {}
+        
+        if tool == "None":
+            params_table.setRowCount(0)
+        elif tool == "Throttle":
+            params_table.setRowCount(1)
+            params_table.setItem(0, 0, QTableWidgetItem("period"))
+            params_table.setCellWidget(0, 1, QLineEdit("0.05"))
+        elif tool == "Drop":
+            params_table.setRowCount(2)
+            params_table.setItem(0, 0, QTableWidgetItem("x"))
+            params_table.setCellWidget(0, 1, QLineEdit("1"))
+            params_table.setItem(1, 0, QTableWidgetItem("y"))
+            params_table.setCellWidget(1, 1, QLineEdit("2"))
+        elif tool == "Delay":
+            params_table.setRowCount(1)
+            params_table.setItem(0, 0, QTableWidgetItem("delay"))
+            params_table.setCellWidget(0, 1, QLineEdit("1.0"))
+    
+    def get_config(self):
+        # Update params from the tables
+        for row in range(self.table.rowCount()):
+            topic_name = self.table.item(row, 0).text()
+            params_table = self.table.cellWidget(row, 2)
+            params = {}
+            for p_row in range(params_table.rowCount()):
+                param_name = params_table.item(p_row, 0).text()
+                value_edit = params_table.cellWidget(p_row, 1)
+                if value_edit:
+                    params[param_name] = value_edit.text().strip()
+            self.tool_configs[topic_name]['params'] = params
+        
+        # Build the full config
+        config = []
+        for topic in self.topics:
+            entry = {
+                'topic_name': topic['name'],
+                'msg_type': topic['type']
+            }
+            tool = self.tool_configs[topic['name']]['tool']
+            params = self.tool_configs[topic['name']]['params']
+            if tool != "None" and params:
+                tool_lower = tool.lower()
+                entry['topic_tools'] = {
+                    'plugin': f'topic_tools::{tool}Node',
+                    'output_topic': f'/{tool_lower}/{topic["name"]}',
+                    'parameters': self._parse_params(tool, params)
+                }
+            config.append(entry)
+        return config
+    
+    def _parse_params(self, tool, params_dict):
+        if tool == "Throttle":
+            try:
+                period = float(params_dict.get('period', '1.0'))
+                return {'period': period}
+            except ValueError:
+                return {'period': 1.0}
+        elif tool == "Drop":
+            try:
+                x = int(params_dict.get('x', '1'))
+                y = int(params_dict.get('y', '2'))
+                return {'x': x, 'y': y}
+            except ValueError:
+                return {'x': 1, 'y': 2}
+        elif tool == "Delay":
+            try:
+                delay = float(params_dict.get('delay', '1.0'))
+                return {'delay': delay}
+            except ValueError:
+                return {'delay': 1.0}
+        return {}
 
 class CustomItemDelegate(QStyledItemDelegate):
     """Custom delegate to preserve item colors even when selected."""
@@ -374,6 +504,13 @@ class IntrospectionPlugin(Plugin):
                 'type': topic_type
             })
         
+        # Show dialog to configure tools
+        dialog = TopicToolsDialog(topics_config, self._widget)
+        if dialog.exec_() != QDialog.Accepted:
+            return  # User cancelled
+        
+        config = dialog.get_config()
+        
         # Create config directory if it doesn't exist
         config_dir = Path.home() / '.ros' / 'gui_client'
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -384,11 +521,7 @@ class IntrospectionPlugin(Plugin):
         config_file = config_dir / f'selected_topics_{timestamp}.yaml'
         
         # Prepare configuration data
-        config_data = {
-            'selected_topics': topics_config,
-            'timestamp': now.isoformat(),
-            'count': len(topics_config)
-        }
+        config_data = config  # The list directly
         
         try:
             # Write to YAML file
@@ -396,13 +529,13 @@ class IntrospectionPlugin(Plugin):
                 yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
             
             # Success message
-            msg = f"Successfully saved {len(topics_config)} topic(s) to:\n{config_file}\n\n"
-            msg += "Topics:\n" + "\n".join([f"  - {t['name']}" for t in topics_config[:5]])
-            if len(topics_config) > 5:
-                msg += f"\n  ... and {len(topics_config) - 5} more"
+            msg = f"Successfully saved {len(config)} topic(s) to:\n{config_file}\n\n"
+            msg += "Topics:\n" + "\n".join([f"  - {t['topic_name']}" for t in config[:5]])
+            if len(config) > 5:
+                msg += f"\n  ... and {len(config) - 5} more"
             
             QMessageBox.information(self._widget, "Topics Saved", msg)
-            self._node.get_logger().info(f"Saved {len(topics_config)} topics to {config_file}")
+            self._node.get_logger().info(f"Saved {len(config)} topics to {config_file}")
             
             selected_texts = {item.text() for item in selected_items}
             for i in range(self.topic_list.count()):
