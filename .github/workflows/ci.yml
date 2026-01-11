@@ -27,7 +27,7 @@ jobs:
       - name: Set image metadata
         id: meta
         run: |
-          IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY}"
+          IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY,,}"
           DOCKERHUB_IMAGE="${DOCKERHUB_REPOSITORY}"
           SHORT_SHA="${GITHUB_SHA::7}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
