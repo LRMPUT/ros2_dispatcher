@@ -50,6 +50,13 @@ ros2 lifecycle set /kafka_sink deactivate
   - `kafka_name` (string, optional): override the Kafka topic mapping input name for this
     subscription (defaults to `topic_name`).
 - `qos_depth` (int, default 10): Depth for the QoS profile (KeepLast).
+- Metrics parameters:
+  - `metrics.enabled` (bool, default `true`): Publish per-topic JSON metrics.
+  - `metrics.interval_ms` (int, default `1000`): Metrics publish interval.
+  - `metrics.topic` (string, default `kafka_sink/metrics`): Metrics topic name.
+- Telemetry parameters:
+  - `telemetry.enabled` (bool, default `false`): Emit per-message telemetry logs.
+  - `telemetry.log_every_n` (int, default `1`): Log every Nth message when telemetry is enabled.
 - Kafka producer parameters (modifiable only while inactive):
   - `kafka.bootstrap_servers` (string, default `localhost:9092`)
   - `kafka.client_id` (string, default `kafka_sink`)
@@ -82,3 +89,6 @@ ros2 param set /kafka_sink subscriptions_yaml "[{'topic_name': '/foo', 'msg_type
   derived from the ROS topic according to the configured mapping rules.
 - Each received serialized message is logged at most once per second per topic with topic name,
   byte size, and aggregate send statistics (sent/queued drops/errors).
+- When telemetry is enabled, `kafka_sink` emits JSON logs tagged with
+  `[kafka_sink_telemetry]` that include `msg_id`, timestamps, payload size, and serialization
+  time for correlation with downstream consumers.

@@ -428,6 +428,8 @@ KafkaSinkNode::KafkaSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<bool>("metrics.enabled", metrics_enabled_);
   this->declare_parameter<int>("metrics.interval_ms", metrics_interval_ms_);
   this->declare_parameter<std::string>("metrics.topic", metrics_topic_);
+  this->declare_parameter<bool>("telemetry.enabled", telemetry_enabled_);
+  this->declare_parameter<int>("telemetry.log_every_n", telemetry_log_every_n_);
   this->declare_parameter<std::string>(
     "kafka.bootstrap_servers", kafka_parameters_.bootstrap_servers);
   this->declare_parameter<std::string>("kafka.client_id", kafka_parameters_.client_id);
@@ -560,6 +562,9 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
   bool pending_metrics_enabled = metrics_enabled_;
   int pending_metrics_interval_ms = metrics_interval_ms_;
   std::string pending_metrics_topic = metrics_topic_;
+  bool telemetry_update_required = false;
+  bool pending_telemetry_enabled = telemetry_enabled_;
+  int pending_telemetry_log_every_n = telemetry_log_every_n_;
 
   for (const auto & param : parameters) {
     const auto & name = param.get_name();
@@ -645,6 +650,13 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
       } else if (name == "metrics.topic") {
         pending_metrics_topic = param.as_string();
       }
+    } else if (name.rfind("telemetry.", 0) == 0) {
+      telemetry_update_required = true;
+      if (name == "telemetry.enabled") {
+        pending_telemetry_enabled = param.as_bool();
+      } else if (name == "telemetry.log_every_n") {
+        pending_telemetry_log_every_n = param.as_int();
+      }
     }
   }
 
@@ -685,6 +697,16 @@ rcl_interfaces::msg::SetParametersResult KafkaSinkNode::on_parameters_set(
     metrics_topic_ = pending_metrics_topic;
   }
 
+  if (telemetry_update_required) {
+    if (pending_telemetry_log_every_n < 1) {
+      result.successful = false;
+      result.reason = "telemetry.log_every_n must be >= 1";
+      return result;
+    }
+    telemetry_enabled_ = pending_telemetry_enabled;
+    telemetry_log_every_n_ = pending_telemetry_log_every_n;
+  }
+
   return result;
 }
 
@@ -697,10 +719,17 @@ bool KafkaSinkNode::configure_from_parameters(std::string * error_message)
   metrics_enabled_ = this->get_parameter("metrics.enabled").as_bool();
   metrics_interval_ms_ = this->get_parameter("metrics.interval_ms").as_int();
   metrics_topic_ = this->get_parameter("metrics.topic").as_string();
+  telemetry_enabled_ = this->get_parameter("telemetry.enabled").as_bool();
+  telemetry_log_every_n_ = this->get_parameter("telemetry.log_every_n").as_int();
 
   std::string qos_error;
   if (!validate_qos_depth(qos_depth_, &qos_error)) {
     *error_message = qos_error;
+    return false;
+  }
+
+  if (telemetry_log_every_n_ < 1) {
+    *error_message = "telemetry.log_every_n must be >= 1.";
     return false;
   }
 
@@ -978,6 +1007,9 @@ bool KafkaSinkNode::build_subscriptions()
           }
         }
 
+        const uint64_t msg_id =
+          runtime_state->msg_seq.fetch_add(1, std::memory_order_relaxed) + 1U;
+
         // Track min/max message size
         const uint64_t msg_size = static_cast<uint64_t>(value.size());
         {
@@ -1000,6 +1032,24 @@ bool KafkaSinkNode::build_subscriptions()
           if (runtime_state->serialize_samples.size() > runtime_state->kMaxSamples) {
             runtime_state->serialize_samples.pop_front();
           }
+        }
+
+        if (telemetry_enabled_ &&
+          (telemetry_log_every_n_ <= 1 || (msg_id % static_cast<uint64_t>(telemetry_log_every_n_) == 0)))
+        {
+          nlohmann::json telemetry = {
+            {"msg_id", msg_id},
+            {"ros_topic", runtime_state->ros_topic},
+            {"kafka_topic", runtime_state->kafka_topic},
+            {"payload_bytes", msg_size},
+            {"serialize_time_ns", serialize_ns},
+            {"receive_time_ns", now_ns},
+            {"kafka_timestamp_ms", stamp_ms},
+            {"payload_format", json_path ? "json" : "cdr"}
+          };
+          RCLCPP_INFO(
+            this->get_logger(),
+            "[kafka_sink_telemetry] %s", telemetry.dump().c_str());
         }
 
         // Echo key and topic name
