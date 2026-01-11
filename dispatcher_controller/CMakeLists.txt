@@ -44,8 +44,9 @@ ament_target_dependencies(dispatcher_controller_node
   rclcpp_components
   composition_interfaces
   introspection_manager_msgs
-  yaml-cpp
 )
+
+target_link_libraries(dispatcher_controller_node yaml-cpp)
 
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)

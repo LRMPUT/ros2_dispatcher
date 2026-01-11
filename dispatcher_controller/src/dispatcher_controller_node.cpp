@@ -178,9 +178,9 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
     introspection_node_name_ + "/set_parameters", rmw_qos_profile_services_default, client_cb_group_);
   load_node_client_ = create_client<composition_interfaces::srv::LoadNode>(
-    component_container_name_ + "/load_node", rmw_qos_profile_services_default, client_cb_group_);
+    component_container_name_ + "/_container/load_node", rmw_qos_profile_services_default, client_cb_group_);
   unload_node_client_ = create_client<composition_interfaces::srv::UnloadNode>(
-    component_container_name_ + "/unload_node", rmw_qos_profile_services_default, client_cb_group_);
+    component_container_name_ + "/_container/unload_node", rmw_qos_profile_services_default, client_cb_group_);
 
   apply_srv_ = create_service<dispatcher_controller::srv::ApplySelection>(
     "apply_selection",
@@ -1040,21 +1040,6 @@ bool DispatcherControllerNode::load_and_activate_topic_tool(
   active.full_node_name = response->full_node_name;
   active.config = tool;
 
-  if (!change_lifecycle_state(
-      active.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE,
-      "configure topic_tools", error_out))
-  {
-    deactivate_and_unload_tool(active, error_out);
-    return false;
-  }
-
-  if (!change_lifecycle_state(
-      active.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE,
-      "activate topic_tools", error_out))
-  {
-    deactivate_and_unload_tool(active, error_out);
-    return false;
-  }
 
   out = active;
   return true;
@@ -1063,17 +1048,6 @@ bool DispatcherControllerNode::load_and_activate_topic_tool(
 bool DispatcherControllerNode::deactivate_and_unload_tool(
   const ActiveTopicTool & tool, std::string & error_out)
 {
-  auto state = get_lifecycle_state(tool.full_node_name);
-  if (state) {
-    if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
-      change_lifecycle_state(
-        tool.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE,
-        "deactivate topic_tools", error_out);
-    }
-    change_lifecycle_state(
-      tool.full_node_name, lifecycle_msgs::msg::Transition::TRANSITION_CLEANUP,
-      "cleanup topic_tools", error_out);
-  }
 
   if (!unload_node_client_->wait_for_service(service_timeout_)) {
     error_out = "unload_node service not available for component container";
@@ -1220,6 +1194,23 @@ bool DispatcherControllerNode::load_file_selection(
             } catch (const std::exception & ex) {
               error_out = ex.what();
               return false;
+            }
+          }
+
+          // Map throttle_rate to correct parameter name based on throttle_type
+          auto throttle_type_it = std::find_if(cfg.parameters.begin(), cfg.parameters.end(),
+            [](const rclcpp::Parameter & p){ return p.get_name() == "throttle_type"; });
+          if (throttle_type_it != cfg.parameters.end()) {
+            std::string type_str;
+            if (throttle_type_it->get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+              type_str = throttle_type_it->as_string();
+            }
+            auto rate_it = std::find_if(cfg.parameters.begin(), cfg.parameters.end(),
+              [](const rclcpp::Parameter & p){ return p.get_name() == "throttle_rate"; });
+            if (rate_it != cfg.parameters.end()) {
+              std::string new_name = (type_str == "messages") ? "msgs_per_sec" : "period";
+              rclcpp::Parameter new_param(new_name, rate_it->get_parameter_value());
+              *rate_it = new_param;
             }
           }
         }
