@@ -62,6 +62,8 @@ jobs:
         run: |
           docker buildx build \
             --load \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --target builder \
             --file docker/Dockerfile \
             --build-arg ROS_DISTRO=${ROS_DISTRO} \
@@ -80,6 +82,8 @@ jobs:
         run: |
           docker buildx build \
             --load \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --file docker/Dockerfile \
             --build-arg ROS_DISTRO=${ROS_DISTRO} \
             --build-arg GIT_SHA=${GITHUB_SHA} \
@@ -144,6 +148,8 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             ROS_DISTRO=${{ env.ROS_DISTRO }}
             GIT_SHA=${{ github.sha }}
