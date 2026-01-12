@@ -56,7 +56,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("selection_mode", default_value="file"),
-            DeclareLaunchArgument("selection_file_path", default_value=""),
+            DeclareLaunchArgument("selection_file_path", default_value="/workspace_omag/src/external/ros2_kafka_dispatcher/ros2_kafka_dispatcher_bringup/config/rosbag_select.yaml"),
             DeclareLaunchArgument("kafka_sink_node_name", default_value="/kafka_sink"),
             DeclareLaunchArgument("mosquitto_sink_node_name", default_value="/mosquitto_sink"),
             DeclareLaunchArgument("validate_topics", default_value="false"),
