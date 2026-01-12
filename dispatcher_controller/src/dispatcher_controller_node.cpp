@@ -215,6 +215,41 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     get_logger(), "dispatcher_controller started in mode [%s], kafka_sink [%s], mosquitto_sink [%s]",
     mode_to_string(selection_mode_).c_str(), kafka_sink_node_name_.c_str(),
     mosquitto_sink_node_name_.c_str());
+
+  if (selection_mode_ == SelectionMode::FILE && auto_apply_on_mode_change_ &&
+    !selection_file_path_.empty())
+  {
+    startup_apply_timer_ = create_wall_timer(
+      1s, [this]() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!startup_apply_timer_) {
+          return;
+        }
+        if (phase_ == ControllerPhase::BUSY) {
+          RCLCPP_WARN(get_logger(), "Startup apply skipped: controller busy");
+          startup_apply_timer_->cancel();
+          return;
+        }
+        if (selection_mode_ != SelectionMode::FILE) {
+          startup_apply_timer_->cancel();
+          return;
+        }
+        if (selection_file_path_.empty()) {
+          RCLCPP_WARN(
+            get_logger(),
+            "Startup apply skipped: selection_file_path is empty in file mode");
+          startup_apply_timer_->cancel();
+          return;
+        }
+        std::string error;
+        if (!switch_mode(selection_mode_, selection_file_path_, true, error)) {
+          last_error_ = error;
+          last_error_stamp_ = now();
+          RCLCPP_WARN(get_logger(), "Startup apply failed: %s", error.c_str());
+        }
+        startup_apply_timer_->cancel();
+      });
+  }
 }
 
 rcl_interfaces::msg::SetParametersResult DispatcherControllerNode::on_param_change(
