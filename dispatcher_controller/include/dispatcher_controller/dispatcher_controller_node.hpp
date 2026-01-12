@@ -235,6 +235,7 @@ private:
   builtin_interfaces::msg::Time last_error_stamp_;
 
   std::chrono::milliseconds service_timeout_{3000};
+  rclcpp::TimerBase::SharedPtr startup_apply_timer_;
   std::mutex mutex_;
 };
 
