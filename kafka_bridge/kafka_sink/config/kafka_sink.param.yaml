@@ -10,6 +10,8 @@
     metrics.enabled: true
     metrics.interval_ms: 1000
     metrics.topic: "kafka_sink/metrics"
+    telemetry.enabled: false
+    telemetry.log_every_n: 1
     kafka.bootstrap_servers: "localhost:9092"
     kafka.client_id: "kafka_sink"
     kafka.acks: "all"

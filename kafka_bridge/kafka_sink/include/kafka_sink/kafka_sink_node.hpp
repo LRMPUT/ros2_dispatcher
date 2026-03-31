@@ -111,6 +111,7 @@ private:
     std::atomic<uint64_t> send_time_ns_max{0};
     std::atomic<uint64_t> msg_size_min{UINT64_MAX};
     std::atomic<uint64_t> msg_size_max{0};
+    std::atomic<uint64_t> msg_seq{0};
 
     // Latency sample buffers for percentile calculation (protected by mutex)
     std::mutex latency_mutex;
@@ -177,6 +178,9 @@ private:
   std::string metrics_topic_{"kafka_sink/metrics"};
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>::SharedPtr metrics_pub_;
   rclcpp::TimerBase::SharedPtr metrics_timer_;
+
+  bool telemetry_enabled_{false};
+  int telemetry_log_every_n_{1};
 };
 }  // namespace kafka_sink
 
