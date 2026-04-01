@@ -77,7 +77,40 @@ The control-plane node. It is a standard `rclcpp::Node` that orchestrates everyt
 
 **topic_tools integration:**
 
-For each topic in the selection, an optional `topic_tools` block can specify a plugin (e.g. `ThrottleNode`). The controller instantiates the plugin as a component in the shared container, wires the ROS topic through it, and registers the transformed output topic with the sink instead of the original.
+For each topic in the selection, an optional `topic_tools` block can specify a plugin. The controller loads the plugin as a component into the shared container (`component_container_name`) via `composition_interfaces/srv/LoadNode`, wires the ROS topic through it (`input_topic` → plugin → `output_topic`), and registers the transformed output topic with the sink instead of the original.
+
+The integration model is strictly **one input topic → one output topic**. Plugin names follow the `package::ClassName` convention and are passed directly to the component loader without validation, so any composable node that conforms to the single-input/single-output contract can be used.
+
+**Available topic_tools nodes:**
+
+| Node | Plugin name | Key parameters | Support status |
+|------|-------------|----------------|----------------|
+| Throttle | `topic_tools::ThrottleNode` | `period` (s between messages) | Supported — tested, config examples available |
+| Drop | `topic_tools::DropNode` | `x` (drop 1-in-x messages) | Supported — listed in developer guide, no config example yet |
+| Delay | `topic_tools::DelayNode` | `delay` (seconds) | Supported — listed in developer guide, no config example yet |
+| Relay | `topic_tools::RelayNode` | — | Architecturally compatible (single in → single out); not tested or documented |
+| RelayField | `topic_tools::RelayFieldNode` | `expression` (field path), `output_type` | Architecturally compatible; requires `output_type` in config; not tested or documented |
+| Transform | `topic_tools::TransformNode` | `expression`, `output_type` | **Not supported** — Python-only node in ROS 2 Humble+; cannot be loaded as a C++ component via `LoadNode` |
+| Mux | `topic_tools::MuxNode` | `mux_topics` (list) | **Not supported** — requires multiple input topics; current `TopicToolsConfig` maps exactly one `input_topic` |
+| Demux | `topic_tools::DemuxNode` | `demux_topics` (list) | **Not supported** — requires multiple output topics; current `TopicToolsConfig` maps exactly one `output_topic` |
+
+**Node descriptions:**
+
+- **Throttle** — Forwards messages from `input_topic` to `output_topic` at most once every `period` seconds. Excess messages are silently dropped. Useful for reducing Kafka ingestion rate for high-frequency sensors (e.g. lidar at 20 Hz → 5 Hz).
+
+- **Drop** — Forwards every x-th message and discards the rest. Unlike Throttle, Drop is count-based rather than time-based, so the output rate tracks the input rate proportionally. Useful when a fixed decimation ratio is needed regardless of timing jitter.
+
+- **Delay** — Buffers incoming messages and republishes them after a fixed `delay` in seconds. Does not change message rate or content. Useful for time-aligning topics from sensors with different hardware latencies before sending to Kafka.
+
+- **Relay** — Re-publishes messages from `input_topic` to `output_topic` without any modification. Primarily useful for renaming a topic or bridging across namespace boundaries before forwarding to a sink.
+
+- **RelayField** — Extracts a single field from the incoming message and publishes it as a new message on `output_topic`. The field is selected via a Python-style `expression` (e.g. `m.linear.x`). The `output_type` must be set to the resulting message type. Useful for stripping large messages down to a single scalar or sub-message before sending to Kafka.
+
+- **Transform** *(not supported)* — Applies an arbitrary Python expression to the incoming message and publishes the result. Implemented as a pure Python node in ROS 2 Humble+; it is not registered as a composable C++ component and therefore cannot be loaded via `composition_interfaces/srv/LoadNode`. Cannot be used with `dispatcher_controller`.
+
+- **Mux** — Subscribes to a list of input topics and republishes the selected one to a single output topic. The active input can be switched at runtime via a service call. Not supported because the current `TopicToolsConfig` struct models exactly one `input_topic`; extending support would require a `mux_topics` list field and corresponding YAML parsing.
+
+- **Demux** — Routes messages from a single input topic to one of several output topics, switchable at runtime. Not supported because the current model maps to exactly one `output_topic`; support would require a `demux_topics` list and the sink would need to know which output channel to subscribe to.
 
 ### kafka_sink
 
