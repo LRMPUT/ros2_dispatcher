@@ -31,7 +31,7 @@ All services are relative to the controller node namespace (default `/dispatcher
 
 `dispatcher_controller/srv/ApplySelection`
 
-Apply a topic selection provided in the request. Used by GUI clients or external automation.
+Applies a GUI-provided topic list. Only valid when `selection_mode` is `gui`; ignored or rejected in other modes.
 
 ```
 # Request
@@ -47,7 +47,7 @@ string message
 
 `dispatcher_controller/srv/ReloadSelection`
 
-Reload and apply the selection from the current mode (re-reads file in `file` mode, re-discovers in `all` mode).
+Reload and apply the selection from the current mode: in `file` mode re-reads the YAML file from `selection_file_path`; in `all` mode re-runs topic auto-discovery via `introspection_manager`; in `gui` mode re-applies the last GUI-provided selection if present.
 
 ```
 # Request
