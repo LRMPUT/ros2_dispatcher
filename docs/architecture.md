@@ -120,7 +120,7 @@ A `rclcpp_lifecycle::LifecycleNode` that forwards ROS 2 messages to Apache Kafka
 - On `activate`: creates generic ROS 2 subscriptions (using `rosidl` type introspection) and starts the producer poll thread.
 - On `deactivate`: destroys subscriptions; producer drains and stops.
 - Each message is serialized (CDR or JSON) and sent to a Kafka topic derived from the ROS topic name (prefix or fixed mapping).
-- Adds Kafka headers: `ros_topic`, `ros_type`, `kafka_topic`, `stamp_ms`, `payload_format`.
+- Adds one Kafka record header: `ros_type` (the ROS 2 message type). Other fields (`ros_topic`, `kafka_topic`, `stamp_ms`, `payload_format`) are written to the telemetry log, not set as headers.
 - Optionally publishes per-topic metrics to ROS 2 at a configurable interval.
 
 ### mosquitto_sink

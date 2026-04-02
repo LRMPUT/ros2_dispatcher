@@ -159,7 +159,7 @@ python3 ros2_kafka_json_sidecar.py \
   --log-level INFO
 ```
 
-The script reads Kafka headers (`ros_topic`, `ros_type`) to determine the ROS 2 type, deserializes with `rclpy.serialization.deserialize_message`, and publishes JSON.
+The script reads the `ros_type` Kafka record header to determine the ROS 2 type, deserializes with `rclpy.serialization.deserialize_message`, and publishes JSON.
 
 ---
 
