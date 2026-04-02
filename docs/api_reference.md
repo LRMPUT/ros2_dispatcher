@@ -207,26 +207,106 @@ string message
 
 Published whenever the topic list changes (if `publish_on_change:=true`) or at every poll cycle.
 
-### kafka_sink / mosquitto_sink
+### kafka_sink
 
 | Topic | Type | Description |
 |-------|------|-------------|
 | `<metrics.topic>` | `std_msgs/msg/String` (JSON) | Per-topic metrics published at `metrics.interval_ms` intervals. |
 
-#### Metrics JSON schema
+#### kafka_sink metrics JSON schema
+
+The payload is a JSON **array**. Each element corresponds to one active ROS topic subscription.
+
+```json
+[
+  {
+    "ros_topic": "/camera/image_raw",
+    "kafka_topic": "ros2.camera.image_raw",
+    "msg_type": "sensor_msgs/msg/Image",
+    "payload_format": "cdr",
+    "interval_ms": 1000,
+    "delta": {
+      "received": 30,
+      "sent_ok": 30,
+      "dropped": 0,
+      "errors": 0,
+      "bytes": 1382400
+    },
+    "rates": {
+      "received_per_sec": 30.0,
+      "sent_per_sec": 30.0
+    },
+    "message_size": {
+      "avg_bytes": 46080.0,
+      "min_bytes": 46080,
+      "max_bytes": 46080
+    },
+    "latency_ns": {
+      "serialize_avg": 12345,
+      "serialize_p95": 15000,
+      "serialize_p99": 18000,
+      "serialize_max": 20000,
+      "send_avg": 5000,
+      "send_p95": 7000,
+      "send_p99": 9000,
+      "send_max": 11000
+    },
+    "throughput": {
+      "serialize_mb_per_sec": 120.5,
+      "send_mb_per_sec": 300.0
+    },
+    "cpu_efficiency": {
+      "ns_per_byte": 0.27,
+      "bytes_per_cpu_ms": 3700000.0
+    },
+    "totals": {
+      "received": 1234,
+      "sent_ok": 1230,
+      "dropped": 2,
+      "errors": 2,
+      "bytes": 56789012
+    }
+  }
+]
+```
+
+### kafka_cdr_to_json
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `<metrics.topic>` | `std_msgs/msg/String` (JSON) | Per-topic metrics published at `metrics.interval_ms` intervals. |
+
+#### kafka_cdr_to_json metrics JSON schema
+
+The payload is a JSON **object** with a top-level `topics` array. Each element corresponds to one
+Kafka input topic being consumed and converted.
 
 ```json
 {
-  "ros_topic": "/camera/image_raw",
-  "kafka_topic": "ros2.camera.image_raw",
-  "msg_count": 1234,
-  "msg_rate_hz": 30.1,
-  "bytes_total": 56789012,
-  "bytes_rate_bps": 1234567,
-  "latency_p50_ms": 2.3,
-  "latency_p95_ms": 5.1,
-  "latency_p99_ms": 9.8,
-  "avg_payload_bytes": 46000
+  "timestamp_ns": 1711900000000000000,
+  "topics": [
+    {
+      "input_topic": "ros2.camera.image_raw",
+      "output_topic": "ros2.camera.image_raw.json",
+      "ros_type": "sensor_msgs/msg/Image",
+      "received": 1234,
+      "converted": 1230,
+      "failed": 4,
+      "delta_received": 30,
+      "delta_converted": 30,
+      "delta_failed": 0,
+      "bytes": 56789012,
+      "rate_msgs_per_s": 30.0,
+      "rate_bytes_per_s": 1382400.0,
+      "latency_ns_p50": 2300000,
+      "latency_ns_p95": 5100000,
+      "latency_ns_p99": 9800000,
+      "latency_ns_max": 15000000,
+      "json_size_min": 4096,
+      "json_size_max": 49152,
+      "json_size_avg": 46000.0
+    }
+  ]
 }
 ```
 
