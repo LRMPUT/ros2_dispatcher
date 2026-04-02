@@ -51,7 +51,8 @@ Reload and apply the selection from the current mode (re-reads file in `file` mo
 
 ```
 # Request
-(empty)
+string selection_file_path   # optional override path (file mode only)
+bool   apply_now             # immediately apply after reload
 
 ---
 # Response
@@ -67,7 +68,7 @@ Deactivate all sinks immediately; no messages will be forwarded until the next `
 
 ```
 # Request
-(empty)
+bool reset_cached   # also clear cached selections if true
 
 ---
 # Response
@@ -87,12 +88,19 @@ Query the current state of the controller and managed sinks.
 
 ---
 # Response
-string selection_mode            # gui | file | all
-string phase                     # IDLE | BUSY | ERROR
-string last_error                # last error message, empty if none
-int64  applied_topics_count      # number of topics currently streaming
-string lifecycle_state_kafka     # lifecycle state of kafka_sink
-string lifecycle_state_mosquitto # lifecycle state of mosquitto_sink
+bool                                        success
+string                                      message
+string                                      selection_mode         # gui | file | all
+bool                                        streaming_active
+string                                      kafka_sink_state       # lifecycle state of kafka_sink
+string                                      mosquitto_sink_state   # lifecycle state of mosquitto_sink
+introspection_manager_msgs/TopicInfo[]      applied_topics         # topics currently streaming
+uint32                                      gui_selection_count
+uint32                                      file_selection_count
+uint32                                      all_selection_count
+string                                      last_error
+builtin_interfaces/Time                     last_error_stamp
+bool                                        reconciling
 ```
 
 #### set_selection_mode
@@ -103,9 +111,9 @@ Switch selection mode at runtime.
 
 ```
 # Request
-string mode        # gui | file | all
-string file_path   # path to selection YAML (only for file mode)
-bool   auto_apply  # immediately apply after mode change
+string selection_mode        # gui | file | all
+string selection_file_path   # path to selection YAML (only for file mode)
+bool   apply_now             # immediately apply after mode change
 
 ---
 # Response
@@ -130,6 +138,61 @@ Return the current snapshot of all discovered topics.
 ---
 # Response
 introspection_manager_msgs/TopicInfo[] topics
+```
+
+#### apply_pipeline
+
+`introspection_manager_msgs/srv/ApplyPipeline`
+
+Apply a desired pipeline specification to the dispatcher_controller.
+
+```
+# Request
+introspection_manager_msgs/TopicInfo[]      subscriptions       # topics to subscribe to
+introspection_manager_msgs/PluginInstance[] plugins             # plugin instances to apply
+string                                      kafka_mapping_yaml  # reserved for future kafka mapping config (YAML)
+
+---
+# Response
+bool   success
+string message
+```
+
+#### get_pipeline_status
+
+`introspection_manager_msgs/srv/GetPipelineStatus`
+
+Return the current pipeline status.
+
+```
+# Request
+(empty)
+
+---
+# Response
+bool                                        success
+string                                      message
+string                                      kafka_sink_state       # lifecycle state of kafka_sink
+introspection_manager_msgs/TopicInfo[]      active_subscriptions   # currently active subscriptions
+introspection_manager_msgs/PluginInstance[] active_plugins         # currently active plugins
+string                                      last_error
+bool                                        reconciling
+```
+
+#### stop_pipeline
+
+`introspection_manager_msgs/srv/StopPipeline`
+
+Stop the current pipeline.
+
+```
+# Request
+(empty)
+
+---
+# Response
+bool   success
+string message
 ```
 
 ---
