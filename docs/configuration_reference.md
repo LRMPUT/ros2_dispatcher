@@ -136,11 +136,12 @@ Defaults in `kafka_bridge/kafka_sink/config/kafka_sink.param.yaml`.
 
 | Header key | Value |
 |------------|-------|
-| `ros_topic` | Original ROS 2 topic name |
 | `ros_type` | ROS 2 message type (e.g. `std_msgs/msg/String`) |
-| `kafka_topic` | Kafka topic the record was produced to |
-| `stamp_ms` | Timestamp in milliseconds |
-| `payload_format` | `cdr` or `json` |
+
+> **Note:** `ros_topic`, `kafka_topic`, `stamp_ms`, and `payload_format` are included in the
+> telemetry log (logged via `RCLCPP_INFO` when `telemetry_enabled` is true) but are **not**
+> attached as Kafka record headers. The record timestamp is set from the ROS message stamp in
+> milliseconds but is stored as the Kafka record timestamp, not as a header.
 
 ---
 

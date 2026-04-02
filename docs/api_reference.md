@@ -196,12 +196,12 @@ Each Kafka record produced by `kafka_sink` has:
 
 | Key | Example value |
 |-----|--------------|
-| `ros_topic` | `/camera/image_raw` |
 | `ros_type` | `sensor_msgs/msg/Image` |
-| `kafka_topic` | `ros2.camera.image_raw` |
-| `msg_type` | `sensor_msgs/msg/Image` |
-| `stamp_ms` | `1711900000000` |
-| `payload_format` | `cdr` |
+
+> **Note:** `ros_topic`, `kafka_topic`, `msg_type`, `stamp_ms`, and `payload_format` are **not**
+> Kafka record headers. `ros_topic`, `kafka_topic`, and `payload_format` appear in the telemetry
+> log; `msg_type` appears in the metrics log. The message timestamp is carried as the Kafka record
+> timestamp (set via `timestamp_ms` in `produce()`), not as a header.
 
 ---
 
