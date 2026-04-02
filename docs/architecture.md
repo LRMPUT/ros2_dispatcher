@@ -186,7 +186,7 @@ Apache Kafka partition
       │
       ▼
 kafka_source consumer thread
-      │  reads CDR bytes + headers (ros_topic, ros_type)
+      │  reads CDR bytes and the `ros_type` header
       ▼
 rosbag2_cpp deserializer
       │  reconstructs typed ROS 2 message
