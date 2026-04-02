@@ -201,9 +201,9 @@ Same as `kafka_sink` (`metrics.enabled`, `metrics.interval_ms`, `metrics.topic`)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `kafka.bootstrap_servers` | string | `localhost:9092` | Broker address. |
-| `kafka.group_id` | string | `kafka_source` | Consumer group ID. |
+| `kafka.group_id` | string | `ros2-kafka-source` | Consumer group ID. |
 | `kafka.topic_pattern` | string | `^ros2\\..*` | Regex pattern for Kafka topics to consume. |
-| `kafka.auto_offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
+| `kafka.offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
 
 ---
 
