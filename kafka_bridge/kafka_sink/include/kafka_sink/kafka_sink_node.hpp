@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "kafka_client/kafka_producer.hpp"
+#include "rcpputils/shared_library.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -97,6 +98,9 @@ private:
     PayloadFormat payload_format{PayloadFormat::CDR};
     const rosidl_message_type_support_t * rmw_type_support{nullptr};
     const rosidl_message_type_support_t * introspection_type_support{nullptr};
+    // Keep shared library handles alive so type support pointers remain valid
+    std::shared_ptr<rcpputils::SharedLibrary> rmw_ts_lib;
+    std::shared_ptr<rcpputils::SharedLibrary> introspection_ts_lib;
     std::atomic<int64_t> next_log_time_ns{0};
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};
