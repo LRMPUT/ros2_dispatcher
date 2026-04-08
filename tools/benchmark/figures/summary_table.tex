@@ -1,24 +1,28 @@
 \begin{table}[ht]
 \centering
-\caption{CDR vs JSON serialization comparison at 10\,Hz.}
+\caption{CDR vs JSON serialization comparison at 10\,Hz publish rate.}
 \label{tab:cdr_vs_json}
 \small
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{llrrrr}
 \toprule
-\textbf{Message type} & \textbf{Format} & \textbf{Size (B)} & \textbf{Serialize avg (\textmu s)} & \textbf{P99 (\textmu s)} & \textbf{Ratio} \\
+\textbf{Message type} & \textbf{Format} & \textbf{Size} & \textbf{Avg} & \textbf{P99} & \textbf{Slowdown} \\
+& & (B) & (\textmu s) & (\textmu s) & \\
 \midrule
 NavSatFix & CDR & 128 & 5.6 & 9.5 & --- \\
  & JSON & 294 & 72.2 & 107.7 & 2.3$\times$ size, 13$\times$ lat \\
 \addlinespace
-Odometry & CDR & 724 & 6.1 & 15.1 & --- \\
+Odometry (zero cov.) & CDR & 724 & 6.1 & 15.1 & --- \\
  & JSON & 702 & 134.4 & 234.1 & 1.0$\times$ size, 22$\times$ lat \\
 \addlinespace
-Odometry_fullcov & CDR & 724 & 5.5 & 7.9 & --- \\
+Odometry (full cov.) & CDR & 724 & 5.5 & 7.9 & --- \\
  & JSON & 1927 & 97.7 & 137.2 & 2.7$\times$ size, 18$\times$ lat \\
 \addlinespace
-PointCloud2 & CDR & 160145 & 11.7 & 30.5 & --- \\
- & JSON & 563625 & 5738.5 & 8787.4 & 3.5$\times$ size, 490$\times$ lat \\
+PointCloud2 (10k pts) & CDR & 160\,145 & 0.01 & 0.03 & --- \\
+ & JSON & 563\,625 & 5.74 & 8.79 & 3.5$\times$ size, 490$\times$ lat \\
 \bottomrule
 \end{tabular}
+\begin{flushleft}
+\footnotesize PointCloud2 latencies reported in milliseconds; all others in microseconds.
+\end{flushleft}
 \end{table}
