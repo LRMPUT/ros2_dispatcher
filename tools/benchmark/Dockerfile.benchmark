@@ -1,0 +1,30 @@
+# Use builder stage directly — it has all compile-time and runtime deps
+ARG ROS_DISTRO=humble
+FROM ros:${ROS_DISTRO}
+ARG ROS_DISTRO
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential cmake git \
+      python3-colcon-common-extensions \
+      python3-rosdep python3-vcstool \
+      nlohmann-json3-dev \
+      librdkafka-dev \
+      libpaho-mqtt-dev \
+      libpaho-mqttpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rosdep init || true && rosdep update
+
+WORKDIR /ws
+COPY . /ws/src
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && rosdep install --from-paths src --ignore-src -y --rosdistro ${ROS_DISTRO}
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+CMD ["bash"]
