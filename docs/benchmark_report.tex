@@ -1,0 +1,35 @@
+\begin{table}[t]
+\caption{Serialization throughput at 500\,Hz.}
+\label{tab:throughput_500hz}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Message} & \textbf{CDR (MB/s)} & \textbf{JSON (MB/s)} & \textbf{CDR/JSON} \\
+\midrule
+NavSatFix            & 94.3    & 12.3  & $8\times$ \\
+Odometry (0 cov.)    & 768.1   & 25.4  & $30\times$ \\
+Odometry (full cov.) & 739.2   & 62.5  & $12\times$ \\
+PointCloud2 (10k pts)& 25\,693 & 127.3 & $202\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{Content sensitivity of JSON payload size (Odometry variants).}
+\label{tab:json_content_sensitivity}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrl}
+\toprule
+\textbf{Variant} & \textbf{CDR (B)} & \textbf{JSON (B)} & \textbf{Covariance content} \\
+\midrule
+Zero covariance & 724 & 702  & \texttt{0.0} values \\
+Full covariance & 724 & 1927 & \texttt{0.025...} values \\
+\midrule
+Increase (full vs zero) & $0\%$ & $+175\%$ & JSON grows with numeric text length \\
+\bottomrule
+\end{tabular}
+\end{table}
