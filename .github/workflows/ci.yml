@@ -46,7 +46,7 @@ jobs:
             -t ${{ steps.meta.outputs.image_name }}:builder \
             .
 
-      - name: Smoke test (ROS 2 environment)
+      - name: Smoke test (builder workspace)
         run: |
           docker run --rm ${{ steps.meta.outputs.image_name }}:builder \
             bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && source /ws/install/setup.bash && ros2 pkg list >/dev/null"
@@ -64,6 +64,18 @@ jobs:
             --build-arg IMAGE_SOURCE="https://github.com/${GITHUB_REPOSITORY}" \
             -t ${{ steps.meta.outputs.image_name }}:ci \
             .
+
+      - name: Smoke test (runtime dependencies)
+        run: |
+          docker run --rm ${{ steps.meta.outputs.image_name }}:ci \
+            bash -lc "set -eo pipefail; \
+                      source /opt/ros/${ROS_DISTRO}/setup.bash; \
+                      source /ws/install/setup.bash; \
+                      ros2 pkg executables kafka_sink >/dev/null; \
+                      ros2 pkg executables mosquitto_sink >/dev/null; \
+                      ! ldd /ws/install/lib/libkafka_sink.so | grep -q 'not found'; \
+                      ! ldd /ws/install/lib/libmosquitto_sink.so | grep -q 'not found'; \
+                      echo OK"
 
       - name: Lint (ruff)
         run: |
