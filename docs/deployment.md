@@ -171,10 +171,10 @@ mosquitto_sink:
 
 ## Docker Hub / GHCR publishing (CI/CD)
 
-The GitHub Actions workflow in `.github/workflows/` builds the image and publishes it:
+Publishing is handled by `.github/workflows/publish-packages.yml`:
 
-- **Pull requests / pushes to `main`:** Build + smoke test only.
-- **Tags matching `v*.*.*`:** Publish to GHCR and Docker Hub.
+- **Pushes to `main`:** Publish `latest` + `sha-<shortsha>` image tags.
+- **Tags matching `v*.*.*`:** Publish version + `sha-<shortsha>` image tags.
 
 Required GitHub secrets:
 
@@ -184,17 +184,23 @@ Required GitHub secrets:
 | `DOCKERHUB_TOKEN` | Docker Hub access token. |
 | `DOCKERHUB_REPOSITORY` | Full image name, e.g. `your-org/ros2-kafka-dispatcher`. |
 
-Publish a release:
+Create a release tag:
 
 ```bash
 git tag v1.2.3
 git push origin v1.2.3
 ```
 
-The workflow publishes:
+The publishing workflow pushes:
 - `your-org/ros2-kafka-dispatcher:1.2.3`
 - `your-org/ros2-kafka-dispatcher:sha-<shortsha>`
 - `your-org/ros2-kafka-dispatcher:latest` (from `main` only)
+
+## Automated GitHub release creation
+
+GitHub Releases are created automatically by `.github/workflows/release.yml` when you push a tag matching `v*.*.*`.
+
+The release body is generated from commit history and merged pull requests via GitHub auto-generated release notes.
 
 ---
 

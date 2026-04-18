@@ -583,7 +583,8 @@ MosquittoSinkNode::CallbackReturn MosquittoSinkNode::on_configure(
   if (configured_subscriptions_.empty()) {
     RCLCPP_WARN(
       get_logger(),
-      "Configured mosquitto_sink with no subscriptions. Activate after setting 'subscriptions_yaml'.");
+      "Configured mosquitto_sink with no subscriptions."
+      " Activate after setting 'subscriptions_yaml'.");
   }
 
   RCLCPP_INFO(
@@ -1296,7 +1297,8 @@ void MosquittoSinkNode::publish_metrics()
 
   const auto now = std::chrono::steady_clock::now();
   const double connection_uptime_sec = health.connected ?
-    std::chrono::duration_cast<std::chrono::duration<double>>(now - health.connected_since).count() :
+    std::chrono::duration_cast<std::chrono::duration<double>>(
+      now - health.connected_since).count() :
     0.0;
 
   for (auto & sub : active_subscriptions_) {

@@ -621,7 +621,9 @@ bool KafkaCdrToJsonNode::start_producer(std::string * error_message)
 
   const auto health = producer_->health();
   if (health.status == kafka_client::ProducerStatus::DEGRADED) {
-    RCLCPP_WARN(get_logger(), "Kafka producer started in degraded mode: %s", health.last_error.c_str());
+    RCLCPP_WARN(
+      get_logger(), "Kafka producer started in degraded mode: %s",
+      health.last_error.c_str());
   }
   return true;
 }
