@@ -31,7 +31,8 @@ docker build \
 
 ```bash
 docker run --rm ros2-kafka-dispatcher:local \
-  bash -lc "source /opt/ros/humble/setup.bash && \
+  bash -lc "set -eo pipefail && \
+             source /opt/ros/humble/setup.bash && \
              source /ws/install/setup.bash && \
              ros2 pkg executables kafka_sink >/dev/null && \
              ros2 pkg executables mosquitto_sink >/dev/null && \
