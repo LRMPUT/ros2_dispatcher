@@ -95,7 +95,7 @@ jobs:
       - name: Smoke test (runtime dependencies)
         run: |
           docker run --rm ${{ steps.meta.outputs.image_name }}:ci \
-            bash -lc "set -euo pipefail; \
+            bash -lc "set -eo pipefail; \
                       source /opt/ros/${ROS_DISTRO}/setup.bash; \
                       source /ws/install/setup.bash; \
                       ros2 pkg executables kafka_sink >/dev/null; \
