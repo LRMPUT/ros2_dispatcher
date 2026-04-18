@@ -509,10 +509,10 @@ class KafkaMockServer(Node):
                     fetch_offset = struct.unpack('>q', message[offset:offset+8])[0]
                     offset += 8
 
-                    # Max bytes
+                    # Max bytes: advance offset but value is not used by mock
                     if offset + 4 > len(message):
                         break
-                    offset += 4  # max_bytes - read but not used by mock
+                    offset += 4
 
                     # Response: partition id
                     response += struct.pack('>i', partition_id)
