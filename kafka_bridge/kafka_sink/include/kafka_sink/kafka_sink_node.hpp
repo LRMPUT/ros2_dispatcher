@@ -154,7 +154,8 @@ private:
   void clear_subscriptions();
   bool configure_from_parameters(std::string * error_message);
   bool validate_qos_depth(int qos_depth, std::string * error_message) const;
-  bool validate_kafka_parameters(const KafkaParameters & pending, std::string * error_message) const;
+  bool validate_kafka_parameters(
+    const KafkaParameters & pending, std::string * error_message) const;
   bool configure_kafka_parameters(std::string * error_message);
   bool start_producer();
   void stop_producer();

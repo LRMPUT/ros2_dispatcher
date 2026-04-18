@@ -871,7 +871,9 @@ bool KafkaSinkNode::start_producer()
 
   const auto health = kafka_producer_->health();
   if (health.status == kafka_client::ProducerStatus::DEGRADED) {
-    RCLCPP_WARN(get_logger(), "Kafka producer started in degraded mode: %s", health.last_error.c_str());
+    RCLCPP_WARN(
+      get_logger(), "Kafka producer started in degraded mode: %s",
+      health.last_error.c_str());
   }
   return true;
 }
@@ -1014,12 +1016,15 @@ bool KafkaSinkNode::build_subscriptions()
 
         auto t1 = std::chrono::steady_clock::now();
         auto serialize_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-        runtime_state->serialize_time_ns_accum.fetch_add(static_cast<uint64_t>(serialize_ns), std::memory_order_relaxed);
+        runtime_state->serialize_time_ns_accum.fetch_add(
+          static_cast<uint64_t>(serialize_ns), std::memory_order_relaxed);
         // update max serialize time
         {
           uint64_t prev = runtime_state->serialize_time_ns_max.load(std::memory_order_relaxed);
           while (static_cast<uint64_t>(serialize_ns) > prev &&
-                 !runtime_state->serialize_time_ns_max.compare_exchange_weak(prev, static_cast<uint64_t>(serialize_ns), std::memory_order_relaxed)) {
+                 !runtime_state->serialize_time_ns_max.compare_exchange_weak(
+                   prev, static_cast<uint64_t>(serialize_ns),
+                   std::memory_order_relaxed)) {
           }
         }
 
@@ -1031,13 +1036,15 @@ bool KafkaSinkNode::build_subscriptions()
         {
           uint64_t prev_min = runtime_state->msg_size_min.load(std::memory_order_relaxed);
           while (msg_size < prev_min &&
-                 !runtime_state->msg_size_min.compare_exchange_weak(prev_min, msg_size, std::memory_order_relaxed)) {
+                 !runtime_state->msg_size_min.compare_exchange_weak(
+                   prev_min, msg_size, std::memory_order_relaxed)) {
           }
         }
         {
           uint64_t prev_max = runtime_state->msg_size_max.load(std::memory_order_relaxed);
           while (msg_size > prev_max &&
-                 !runtime_state->msg_size_max.compare_exchange_weak(prev_max, msg_size, std::memory_order_relaxed)) {
+                 !runtime_state->msg_size_max.compare_exchange_weak(
+                   prev_max, msg_size, std::memory_order_relaxed)) {
           }
         }
 
@@ -1051,7 +1058,8 @@ bool KafkaSinkNode::build_subscriptions()
         }
 
         if (telemetry_enabled_ &&
-          (telemetry_log_every_n_ <= 1 || (msg_id % static_cast<uint64_t>(telemetry_log_every_n_) == 0)))
+          (telemetry_log_every_n_ <= 1 ||
+          (msg_id % static_cast<uint64_t>(telemetry_log_every_n_) == 0)))
         {
           nlohmann::json telemetry = {
             {"msg_id", msg_id},
@@ -1080,17 +1088,21 @@ bool KafkaSinkNode::build_subscriptions()
         headers.push_back({"ros_type", runtime_state->msg_type});
 
         runtime_state->msgs_total.fetch_add(1, std::memory_order_relaxed);
-        runtime_state->bytes_total.fetch_add(static_cast<uint64_t>(value.size()), std::memory_order_relaxed);
+        runtime_state->bytes_total.fetch_add(
+          static_cast<uint64_t>(value.size()), std::memory_order_relaxed);
 
         auto result = producer->send(
           runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);
         auto t2 = std::chrono::steady_clock::now();
         auto send_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-        runtime_state->send_time_ns_accum.fetch_add(static_cast<uint64_t>(send_ns), std::memory_order_relaxed);
+        runtime_state->send_time_ns_accum.fetch_add(
+          static_cast<uint64_t>(send_ns), std::memory_order_relaxed);
         {
           uint64_t prev = runtime_state->send_time_ns_max.load(std::memory_order_relaxed);
           while (static_cast<uint64_t>(send_ns) > prev &&
-                 !runtime_state->send_time_ns_max.compare_exchange_weak(prev, static_cast<uint64_t>(send_ns), std::memory_order_relaxed)) {
+                 !runtime_state->send_time_ns_max.compare_exchange_weak(
+                   prev, static_cast<uint64_t>(send_ns),
+                   std::memory_order_relaxed)) {
           }
         }
         // Store send latency sample
