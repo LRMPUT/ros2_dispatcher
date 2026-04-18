@@ -1,0 +1,26 @@
+\begin{table}[t]
+\caption{CDR vs JSON at 10\,Hz (mean of 3 runs, 60\,s each).}
+\label{tab:cdr_json_summary}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Message} & \textbf{Fmt.} & \textbf{Size (B)} & \textbf{Avg} & \textbf{P99} & \textbf{JSON/CDR} \\
+\midrule
+NavSatFix & CDR  & 128     & 5.6   & 9.5   & --- \\
+          & JSON & 294     & 72.2  & 107.7 & $2.3\times$ size, $13\times$ lat. \\
+\addlinespace
+Odometry (0 cov.) & CDR  & 724   & 6.1   & 15.1  & --- \\
+                   & JSON & 702   & 134.4 & 234.1 & $1.0\times$ size, $22\times$ lat. \\
+\addlinespace
+Odometry (full cov.) & CDR  & 724  & 5.5   & 7.9   & --- \\
+                      & JSON & 1927 & 97.7  & 137.2 & $2.7\times$ size, $18\times$ lat. \\
+\addlinespace
+PointCloud2 (10k pts) & CDR  & 160\,145 & 0.01 & 0.03 & --- \\
+                       & JSON & 563\,625 & 5.74 & 8.79 & $3.5\times$ size, $490\times$ lat. \\
+\bottomrule
+\end{tabular}
+\vspace{1mm}
+\footnotesize\emph{Units:} latency in $\mu$s, except PointCloud2 (ms).
+\end{table}
