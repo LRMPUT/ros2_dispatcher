@@ -47,6 +47,9 @@ class _DummyLogger:
     def warn(self, *args, **kwargs):
         pass
 
+    def warning(self, *args, **kwargs):
+        pass
+
     def error(self, *args, **kwargs):
         pass
 
@@ -163,8 +166,9 @@ def test_handle_kafka_message_routes_supported_api_keys_and_fallback():
     assert server.handle_kafka_message(_request_header(999, 1, 10)) == b'empty'
 
 
-def test_handle_kafka_message_returns_none_for_short_payload():
+def test_handle_kafka_message_returns_none_for_short_payloads():
     module = _load_module()
     server = _make_server(module)
 
+    assert server.handle_kafka_message(b'') is None
     assert server.handle_kafka_message(b'1234567') is None
