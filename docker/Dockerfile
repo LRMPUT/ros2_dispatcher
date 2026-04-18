@@ -52,6 +52,14 @@ LABEL org.opencontainers.image.created=${BUILD_DATE} \
 
 ENV ROS_DISTRO=${ROS_DISTRO}
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      librdkafka1 \
+      librdkafka++1 \
+      libpaho-mqtt1.3 \
+      libpaho-mqttpp3-1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 10001 ros \
     && mkdir -p /ws \
     && chown -R ros:ros /ws
