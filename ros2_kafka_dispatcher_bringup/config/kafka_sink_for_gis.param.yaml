@@ -1,0 +1,26 @@
+/**:
+  ros__parameters:
+    qos_depth: 10
+    subscriptions_yaml: |
+      - topic_name: /leader/gps/fix
+        msg_type: sensor_msgs/msg/NavSatFix
+      - topic_name: /leader/localisation/filtered_odom
+        msg_type: nav_msgs/msg/Odometry
+    metrics.enabled: false
+    metrics.interval_ms: 1000
+    metrics.topic: "kafka_sink/metrics"
+    telemetry.enabled: false
+    telemetry.log_every_n: 1
+    kafka.bootstrap_servers: "localhost:9092"
+    kafka.client_id: "kafka_sink_leader"
+    kafka.acks: "all"
+    kafka.topic_prefix: "ros2"
+    kafka.topic_mapping_mode: "prefix_ros_topic"
+    kafka.fixed_topic: "ros2.raw"
+    kafka.message_key: "leader"
+    kafka.strict_startup: false
+    kafka.max_queue_messages: 1024
+    kafka.drop_when_full: true
+    kafka.linger_ms: 5
+    kafka.batch_size: 65536
+    kafka.payload_format: "json"
