@@ -35,3 +35,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Scalability experiment outputs
+tools/benchmark/scaling/results/*
+!tools/benchmark/scaling/results/.gitkeep
