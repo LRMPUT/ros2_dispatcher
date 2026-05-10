@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    kafka.bootstrap_servers: "localhost:9092"
+    kafka.client_id: "gis_health_node"
+    kafka.acks: "1"
+    kafka.strict_startup: false
+
+    gis.robot_list: ["leader"]
+    gis.health_topic: "robot_health"
+    gis.registration_topic: "robot_registration"
+    gis.health_period_s: 30.0
+    gis.odom_kafka_topic: "ros_filtered_odom"
+    gis.gps_kafka_topic: "ros_gps_fix"
