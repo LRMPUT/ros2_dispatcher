@@ -70,6 +70,8 @@ class BagLooper:
         return self
 
     def __next__(self):
+        if self._reader is None:
+            raise RuntimeError("BagLooper is permanently broken after failed re-open")
         if not self._reader.has_next():
             self._open_reader()
         _topic, data, _t = self._reader.read_next()
