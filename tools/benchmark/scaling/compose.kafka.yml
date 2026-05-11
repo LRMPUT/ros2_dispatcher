@@ -39,6 +39,7 @@ services:
       ROS_DOMAIN_ID: "42"
     volumes:
       - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
+      - ../../../tools/benchmark:/host_tools/benchmark:ro
       - ./results:/artifacts
     entrypoint: ["/usr/local/bin/sink_entrypoint.sh"]
     depends_on:
