@@ -19,7 +19,6 @@ services:
       KSQL_BOOTSTRAP_SERVERS: "localhost:9092"
       KSQL_KSQL_SERVICE_ID: "scaling-ksqldb-"
       KSQL_KSQL_STREAMS_AUTO_OFFSET_RESET: "earliest"
-      KSQL_KSQL_QUERIES_FILE: ""
     depends_on:
       - broker
     healthcheck:
