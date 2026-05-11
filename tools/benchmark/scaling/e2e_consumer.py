@@ -78,7 +78,6 @@ def _consume_kafka(
             "enable.auto.commit": False,
         }
     )
-    consumer.subscribe([], on_assign=None)
     consumer.subscribe([pattern])  # confluent-kafka supports regex with `^` prefix
 
     t_start = time.monotonic()

@@ -18,8 +18,12 @@ for ((i = 1; i <= NUM_ROBOTS; i++)); do
 done
 
 # ── Source the workspace built inside the image ──
+# ROS setup scripts reference unset variables (e.g. AMENT_TRACE_SETUP_FILES) which
+# trip `set -u`. Disable nounset locally for the sourcing block.
+set +u
 source /opt/ros/humble/setup.bash
 source /ws/install/setup.bash
+set -u
 
 # ── Pick exe and metrics topic ──
 case "${SINK_KIND}" in
