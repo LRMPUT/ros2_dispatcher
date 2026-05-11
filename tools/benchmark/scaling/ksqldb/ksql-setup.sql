@@ -4,8 +4,12 @@
 
 SET 'auto.offset.reset' = 'earliest';
 
+-- Note: robot_id is declared as a VALUE column (not KEY) so the SELECT
+-- propagates it into the downstream JSON value. ksqlDB drops bare KEY
+-- columns from the output value, which would silently break the consumer's
+-- robot_id extraction.
 CREATE STREAM ros_gps_fix_stream (
-  robot_id VARCHAR KEY,
+  robot_id VARCHAR,
   latitude DOUBLE,
   longitude DOUBLE,
   altitude DOUBLE,
@@ -13,7 +17,6 @@ CREATE STREAM ros_gps_fix_stream (
   t0_ns BIGINT
 ) WITH (
   KAFKA_TOPIC='ros_gps_fix',
-  KEY_FORMAT='KAFKA',
   VALUE_FORMAT='JSON',
   PARTITIONS=1
 );
