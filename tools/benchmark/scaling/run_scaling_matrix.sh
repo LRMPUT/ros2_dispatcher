@@ -90,8 +90,6 @@ run_cell() {
 # ── Smoke gate (N=10, single rep) before the full matrix ──
 echo "[smoke] Running N=10 on each broker as a smoke gate."
 for broker in "${BROKERS[@]}"; do
-    SMOKE_DIR="${ABS_RESULTS}/SMOKE_${broker}"
-    rm -rf "${SMOKE_DIR}"
     run_cell "${broker}" 10 "smoke"
     LINES=$(wc -l < "${ABS_RESULTS}/N=10_broker=${broker}_run=smoke/consumer.jsonl" 2>/dev/null || echo 0)
     EXPECTED=$(( 10 * 10 * DURATION_S ))
