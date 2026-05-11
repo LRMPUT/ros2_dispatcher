@@ -65,8 +65,8 @@ NUM_ROBOTS="${N}" "${COMPOSE_CMD[@]}" up -d
 # 4. Wait warmup + duration + small bringup pad
 sleep $((WARMUP_S + DURATION_S + 8 + N / 5))
 
-# 5. Stop (cleanup trap will handle the rest)
-"${COMPOSE_CMD[@]}" stop consumer 2>&1 | tail -3
+# 5. Stop the consumer cleanly so its output buffer flushes (cleanup trap handles the rest)
+NUM_ROBOTS="${N}" "${COMPOSE_CMD[@]}" stop consumer 2>&1 | tail -3
 
 # 6. Move artifacts
 if [[ -f "${SCRIPT_DIR}/results/consumer.jsonl" ]]; then

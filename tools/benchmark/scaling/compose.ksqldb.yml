@@ -58,7 +58,8 @@ services:
     ipc: host
     environment:
       KAFKA_BOOTSTRAP: "localhost:9092"
-      INPUT_PATTERN: "^ros2\\.robot_\\d+\\.gnss$$"
+      # librdkafka uses POSIX regex (no \d, no \w). Use [0-9]+.
+      INPUT_PATTERN: "^ros2\\.robot_[0-9]+\\.gnss$$"
       OUTPUT_TOPIC: "ros_gps_fix"
     depends_on:
       - ksqldb-init

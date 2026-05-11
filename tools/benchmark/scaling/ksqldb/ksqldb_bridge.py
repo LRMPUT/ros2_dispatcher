@@ -34,7 +34,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--input-pattern",
-        default=os.environ.get("INPUT_PATTERN", r"^ros2\.robot_\d+\.gnss$"),
+        # librdkafka regex is POSIX (no \d, no \w). Use [0-9]+.
+        default=os.environ.get("INPUT_PATTERN", r"^ros2\.robot_[0-9]+\.gnss$"),
         help="confluent-kafka regex pattern to subscribe to",
     )
     parser.add_argument(
