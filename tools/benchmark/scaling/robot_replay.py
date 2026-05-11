@@ -8,7 +8,14 @@ the e2e consumer subtracts to compute latency.
 """
 from __future__ import annotations
 
+import argparse
+import os
+import socket
+import time
+
 import rosbag2_py
+import rclpy
+from rclpy.node import Node
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from sensor_msgs.msg import NavSatFix
@@ -76,15 +83,6 @@ class BagLooper:
             self._open_reader()
         _topic, data, _t = self._reader.read_next()
         return deserialize_message(data, self._msg_class)
-
-
-import argparse
-import os
-import socket
-import time
-
-import rclpy
-from rclpy.node import Node
 
 
 def derive_robot_id_from_hostname() -> int:
