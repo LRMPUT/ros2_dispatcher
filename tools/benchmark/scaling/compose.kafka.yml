@@ -34,6 +34,7 @@ services:
   sink:
     image: ros2-kafka-dispatcher:scaling
     network_mode: host
+    ipc: host
     user: "0:0"  # write /artifacts (host owned 1000:1000) without uid mismatch
     environment:
       NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
@@ -51,6 +52,7 @@ services:
   consumer:
     image: ros2-scaling-consumer:local
     network_mode: host
+    ipc: host
     command:
       - "--broker=kafka"
       - "--bootstrap=localhost:9092"
@@ -66,6 +68,7 @@ services:
   robot:
     image: ros2-scaling-robot:local
     network_mode: host
+    ipc: host
     environment:
       NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
       BAG_PATH: "/data/bag"
