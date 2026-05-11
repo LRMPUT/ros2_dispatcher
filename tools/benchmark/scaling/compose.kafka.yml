@@ -66,16 +66,3 @@ services:
       - broker
       - sink
 
-  robot:
-    image: ros2-scaling-robot:local
-    network_mode: host
-    ipc: host
-    environment:
-      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
-      BAG_PATH: "/data/bag"
-      RATE_HZ: "10"
-      ROS_DOMAIN_ID: "42"
-    volumes:
-      - "${BAG_PATH:?BAG_PATH is required}:/data/bag:ro"
-    depends_on:
-      - sink

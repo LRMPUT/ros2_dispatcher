@@ -56,6 +56,7 @@ mkdir -p "${ABS_RESULTS}"
 run_cell() {
     local broker="$1" n="$2" rep="$3"
     local compose="compose.${broker}.yml"
+    local robots_compose="/tmp/scaling_robots_${broker}_${n}_${rep}.yml"
     local cell_dir="${ABS_RESULTS}/N=${n}_broker=${broker}_run=${rep}"
 
     echo "==============================================="
@@ -64,17 +65,28 @@ run_cell() {
 
     mkdir -p "${cell_dir}"
 
-    # 1. Bring up broker + sink first (no robots yet)
-    NUM_ROBOTS="${n}" docker compose -f "${compose}" up -d broker sink consumer
+    # Generate per-cell robots compose with N explicit robot_<i> services.
+    "${SCRIPT_DIR}/gen_robots_compose.sh" "${n}" "${robots_compose}"
+
+    # 1. Bring up broker + sink + consumer
+    NUM_ROBOTS="${n}" docker compose \
+        -f "${compose}" -f "${robots_compose}" \
+        up -d broker sink consumer
     # 2. Give the sink time to reach ACTIVE
     sleep 8
-    # 3. Bring up the robot fleet (one container, N publishers in fleet mode)
-    NUM_ROBOTS="${n}" docker compose -f "${compose}" up -d robot
-    # 4. Wait warmup + duration (the consumer enforces its own window
-    #    independently; we sleep slightly longer to ensure clean exit)
-    sleep $(( WARMUP_S + DURATION_S + 5 ))
+    # 3. Bring up all N robot containers (the generated compose defines robot_1..robot_N)
+    NUM_ROBOTS="${n}" docker compose \
+        -f "${compose}" -f "${robots_compose}" \
+        up -d
+    # 4. Wait warmup + duration. At larger N container bringup takes longer,
+    #    so add a small per-robot pad (5s + n/5 seconds).
+    local bringup_pad=$(( 5 + n / 5 ))
+    sleep $(( WARMUP_S + DURATION_S + bringup_pad ))
     # 5. Tear down
-    NUM_ROBOTS="${n}" docker compose -f "${compose}" down -v --remove-orphans
+    NUM_ROBOTS="${n}" docker compose \
+        -f "${compose}" -f "${robots_compose}" \
+        down -v --remove-orphans
+    rm -f "${robots_compose}"
 
     # 6. Move artifacts
     if [[ -f "${ABS_RESULTS}/consumer.jsonl" ]]; then
