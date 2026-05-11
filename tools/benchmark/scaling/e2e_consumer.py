@@ -76,6 +76,9 @@ def _consume_kafka(
             "group.id": f"e2e-consumer-{int(time.time())}",
             "auto.offset.reset": "latest",
             "enable.auto.commit": False,
+            # Default is 5 min; refresh fast so we pick up new robot topics as
+            # they're created at experiment start.
+            "topic.metadata.refresh.interval.ms": 1000,
         }
     )
     consumer.subscribe([pattern])  # confluent-kafka supports regex with `^` prefix
