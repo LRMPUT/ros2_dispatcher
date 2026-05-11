@@ -13,7 +13,9 @@ CREATE STREAM ros_gps_fix_stream (
   t0_ns BIGINT
 ) WITH (
   KAFKA_TOPIC='ros_gps_fix',
-  VALUE_FORMAT='JSON'
+  KEY_FORMAT='KAFKA',
+  VALUE_FORMAT='JSON',
+  PARTITIONS=1
 );
 
 CREATE STREAM robot_geofence_alerts WITH (
