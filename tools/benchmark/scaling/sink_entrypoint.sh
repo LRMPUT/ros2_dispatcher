@@ -40,10 +40,10 @@ case "${SINK_KIND}" in
         METRICS_TOPIC="/mosquitto_sink/metrics"
         FORMAT_PARAM=""
         # NOTE: BROKER_HOST must be a single token; we rely on word-splitting below.
-        BROKER_PARAM="-p mqtt.host:=${BROKER_HOST:-localhost} -p mqtt.port:=1883"
+        BROKER_PARAM="-p mqtt.broker_host:=${BROKER_HOST:-localhost} -p mqtt.broker_port:=1883"
         TOPIC_PREFIX_PARAM="-p mqtt.topic_prefix:=ros2"
-        DROP_PARAM="-p mqtt.drop_when_full:=true"
-        STRICT_PARAM="-p mqtt.strict_startup:=false"
+        DROP_PARAM=""
+        STRICT_PARAM=""
         ;;
     *)
         echo "Unknown SINK_KIND: ${SINK_KIND}" >&2
@@ -53,7 +53,7 @@ esac
 
 # ── Start metrics recorder in background ──
 python3 /ws/src/ros2_kafka_dispatcher/tools/benchmark/metrics_recorder.py \
-    --topic "${METRICS_TOPIC}" \
+    --metrics-topic "${METRICS_TOPIC}" \
     --output "${RESULTS_DIR}/sink_metrics.csv" \
     --duration 0 &
 METRICS_PID=$!
