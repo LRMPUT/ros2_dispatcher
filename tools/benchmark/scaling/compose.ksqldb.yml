@@ -23,10 +23,12 @@ services:
     depends_on:
       - broker
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8088/info >/dev/null"]
+      # ksqlDB image has no curl. Use bash /dev/tcp to probe port 8088.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8088'"]
       interval: 5s
-      timeout: 5s
-      retries: 20
+      timeout: 3s
+      retries: 30
+      start_period: 30s
 
   ksqldb-init:
     image: confluentinc/ksqldb-cli:0.29.0
