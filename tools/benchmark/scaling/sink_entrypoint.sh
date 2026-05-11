@@ -28,6 +28,7 @@ case "${SINK_KIND}" in
         NODE_NAME="kafka_sink"
         METRICS_TOPIC="/kafka_sink/metrics"
         FORMAT_PARAM="-p kafka.payload_format:=cdr"
+        # NOTE: BROKER_HOST must be a single token; we rely on word-splitting below.
         BROKER_PARAM="-p kafka.bootstrap_servers:=${BROKER_HOST:-localhost}:9092"
         TOPIC_PREFIX_PARAM="-p kafka.topic_prefix:=ros2"
         DROP_PARAM="-p kafka.drop_when_full:=true"
@@ -38,6 +39,7 @@ case "${SINK_KIND}" in
         NODE_NAME="mosquitto_sink"
         METRICS_TOPIC="/mosquitto_sink/metrics"
         FORMAT_PARAM=""
+        # NOTE: BROKER_HOST must be a single token; we rely on word-splitting below.
         BROKER_PARAM="-p mqtt.host:=${BROKER_HOST:-localhost} -p mqtt.port:=1883"
         TOPIC_PREFIX_PARAM="-p mqtt.topic_prefix:=ros2"
         DROP_PARAM="-p mqtt.drop_when_full:=true"
@@ -73,8 +75,13 @@ ros2 run "${NODE_NAME}" "${EXE}" --ros-args \
     -p metrics.interval_ms:=1000 &
 SINK_PID=$!
 
-# ── Lifecycle: configure → activate ──
-sleep 2
+# ── Wait for lifecycle service, then configure → activate ──
+# At large N the sink may need >2 s to register; poll until reachable.
+echo "[entrypoint] Waiting for lifecycle node /${NODE_NAME} to appear..."
+if ! timeout 30 bash -c "until ros2 lifecycle get /${NODE_NAME} >/dev/null 2>&1; do sleep 0.2; done"; then
+    echo "[entrypoint] ERROR: /${NODE_NAME} lifecycle service not reachable after 30 s" >&2
+    exit 1
+fi
 ros2 lifecycle set "/${NODE_NAME}" configure
 ros2 lifecycle set "/${NODE_NAME}" activate
 
