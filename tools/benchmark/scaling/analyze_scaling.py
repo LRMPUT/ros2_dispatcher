@@ -109,6 +109,30 @@ def main() -> None:
         return
 
     _plot_summary(rows, os.path.join(args.output, "plots"))
+    _write_markdown_table(rows, args.output)
+
+
+def _write_markdown_table(rows: List[dict], output_dir: str) -> None:
+    """Write a per-(N, broker) summary as Markdown for paper paste-in."""
+    if not rows:
+        return
+    # Aggregate across reps
+    by_cell: Dict[tuple, List[dict]] = {}
+    for r in rows:
+        by_cell.setdefault((r["broker"], r["n"]), []).append(r)
+    out_path = os.path.join(output_dir, "summary_table.md")
+    with open(out_path, "w") as f:
+        f.write("| Broker | N | P50 lat (ms) | P95 lat (ms) | P99 lat (ms) | Throughput (msg/s) | Drop rate |\n")
+        f.write("|---|---|---|---|---|---|---|\n")
+        for (broker, n) in sorted(by_cell.keys(), key=lambda t: (t[0], t[1])):
+            reps = by_cell[(broker, n)]
+            mean_p50 = statistics.mean(r["latency_p50_ns"] for r in reps) / 1e6
+            mean_p95 = statistics.mean(r["latency_p95_ns"] for r in reps) / 1e6
+            mean_p99 = statistics.mean(r["latency_p99_ns"] for r in reps) / 1e6
+            mean_tput = statistics.mean(r["throughput_msgs_per_s"] for r in reps)
+            mean_drop = statistics.mean(r["drop_rate"] for r in reps)
+            f.write(f"| {broker} | {n} | {mean_p50:.2f} | {mean_p95:.2f} | {mean_p99:.2f} | {mean_tput:.1f} | {mean_drop:.4f} |\n")
+    print(f"Wrote {out_path}")
 
 
 def _plot_summary(rows: List[dict], plot_dir: str) -> None:
