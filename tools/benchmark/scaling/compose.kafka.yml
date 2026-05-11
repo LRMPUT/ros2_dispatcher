@@ -1,6 +1,8 @@
 # Kafka stack for the scalability matrix. Bring up with:
-#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose \
-#     -f compose.kafka.yml up -d --scale robot=10
+#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose -f compose.kafka.yml up -d
+# The robot service runs ONE container that hosts NUM_ROBOTS rclpy publishers
+# (fleet mode). Using one container avoids the ROBOT_ID-from-hostname issue under
+# `network_mode: host`.
 services:
 
   broker:
@@ -32,6 +34,7 @@ services:
   sink:
     image: ros2-kafka-dispatcher:scaling
     network_mode: host
+    user: "0:0"  # write /artifacts (host owned 1000:1000) without uid mismatch
     environment:
       NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
       SINK_KIND: "kafka"
@@ -64,6 +67,7 @@ services:
     image: ros2-scaling-robot:local
     network_mode: host
     environment:
+      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
       BAG_PATH: "/data/bag"
       RATE_HZ: "10"
       ROS_DOMAIN_ID: "42"

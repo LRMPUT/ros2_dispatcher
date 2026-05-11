@@ -119,7 +119,13 @@ def main() -> None:
         "--robot-id",
         type=int,
         default=int(os.environ.get("ROBOT_ID", "-1")),
-        help="If <0, derived from hostname",
+        help="Single-robot mode: this container's robot_id. If <0, falls back to hostname or NUM_ROBOTS fleet mode.",
+    )
+    parser.add_argument(
+        "--num-robots",
+        type=int,
+        default=int(os.environ.get("NUM_ROBOTS", "0")),
+        help="Fleet mode: spin N RobotReplay nodes (robot_id=1..N) in a single process. If >0, takes precedence over --robot-id.",
     )
     parser.add_argument(
         "--bag-path",
@@ -135,14 +141,28 @@ def main() -> None:
 
     if not args.bag_path:
         raise SystemExit("BAG_PATH (env or --bag-path) is required")
-    robot_id = args.robot_id if args.robot_id >= 0 else derive_robot_id_from_hostname()
 
     rclpy.init()
-    node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+    nodes = []
     try:
-        rclpy.spin(node)
+        if args.num_robots > 0:
+            # Fleet mode: spin N robots in this process via MultiThreadedExecutor.
+            from rclpy.executors import MultiThreadedExecutor
+            executor = MultiThreadedExecutor(num_threads=min(args.num_robots, 8))
+            for robot_id in range(1, args.num_robots + 1):
+                node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+                nodes.append(node)
+                executor.add_node(node)
+            print(f"[robot_replay] Fleet mode: {args.num_robots} robots @ {args.rate_hz} Hz", flush=True)
+            executor.spin()
+        else:
+            robot_id = args.robot_id if args.robot_id >= 0 else derive_robot_id_from_hostname()
+            node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+            nodes.append(node)
+            rclpy.spin(node)
     finally:
-        node.destroy_node()
+        for node in nodes:
+            node.destroy_node()
         rclpy.shutdown()
 
 

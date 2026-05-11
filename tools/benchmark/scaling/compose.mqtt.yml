@@ -1,6 +1,6 @@
 # MQTT stack. Bring up with:
-#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose \
-#     -f compose.mqtt.yml up -d --scale robot=10
+#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose -f compose.mqtt.yml up -d
+# Robot service: one container with NUM_ROBOTS rclpy publishers (fleet mode).
 services:
 
   broker:
@@ -13,6 +13,7 @@ services:
   sink:
     image: ros2-kafka-dispatcher:scaling
     network_mode: host
+    user: "0:0"  # write /artifacts (host owned 1000:1000) without uid mismatch
     environment:
       NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
       SINK_KIND: "mqtt"
@@ -46,6 +47,7 @@ services:
     image: ros2-scaling-robot:local
     network_mode: host
     environment:
+      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
       BAG_PATH: "/data/bag"
       RATE_HZ: "10"
       ROS_DOMAIN_ID: "42"

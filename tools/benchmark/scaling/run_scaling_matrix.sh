@@ -68,8 +68,8 @@ run_cell() {
     NUM_ROBOTS="${n}" docker compose -f "${compose}" up -d broker sink consumer
     # 2. Give the sink time to reach ACTIVE
     sleep 8
-    # 3. Scale robots up
-    NUM_ROBOTS="${n}" docker compose -f "${compose}" up -d --scale robot="${n}" robot
+    # 3. Bring up the robot fleet (one container, N publishers in fleet mode)
+    NUM_ROBOTS="${n}" docker compose -f "${compose}" up -d robot
     # 4. Wait warmup + duration (the consumer enforces its own window
     #    independently; we sleep slightly longer to ensure clean exit)
     sleep $(( WARMUP_S + DURATION_S + 5 ))
