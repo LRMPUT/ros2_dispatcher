@@ -1,0 +1,12 @@
+# ksqlDB output consumer — no ROS dependency required because the payload
+# is JSON, not CDR. Pure-Python image.
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir confluent-kafka
+
+WORKDIR /app
+COPY ksqldb_consumer.py /app/
+
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python3", "/app/ksqldb_consumer.py"]
