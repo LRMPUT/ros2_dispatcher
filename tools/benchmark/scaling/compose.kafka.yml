@@ -1,0 +1,60 @@
+# Kafka stack for the scalability matrix. Bring up with:
+#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose \
+#     -f compose.kafka.yml up -d --scale robot=10
+services:
+
+  broker:
+    image: bitnami/kafka:3.7
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@broker:9093"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "9092:9092"
+
+  sink:
+    image: ros2-kafka-dispatcher:scaling
+    network_mode: host
+    environment:
+      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
+      SINK_KIND: "kafka"
+      BROKER_HOST: "localhost"
+      ROS_DOMAIN_ID: "42"
+    volumes:
+      - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
+      - ./results:/artifacts
+    entrypoint: ["/usr/local/bin/sink_entrypoint.sh"]
+    depends_on:
+      - broker
+
+  consumer:
+    image: ros2-scaling-consumer:local
+    network_mode: host
+    command:
+      - "--broker=kafka"
+      - "--bootstrap=localhost:9092"
+      - "--warmup=10"
+      - "--duration=60"
+      - "--output=/artifacts/consumer.jsonl"
+    volumes:
+      - ./results:/artifacts
+    depends_on:
+      - broker
+      - sink
+
+  robot:
+    image: ros2-scaling-robot:local
+    network_mode: host
+    environment:
+      BAG_PATH: "/data/bag"
+      RATE_HZ: "10"
+      ROS_DOMAIN_ID: "42"
+    volumes:
+      - "${BAG_PATH:?BAG_PATH is required}:/data/bag:ro"
+    depends_on:
+      - sink

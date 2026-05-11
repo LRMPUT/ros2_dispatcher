@@ -1,0 +1,54 @@
+# MQTT stack. Bring up with:
+#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose \
+#     -f compose.mqtt.yml up -d --scale robot=10
+services:
+
+  broker:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+    volumes:
+      - ../../../mosquitto_bridge/mosquitto_brocker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  sink:
+    image: ros2-kafka-dispatcher:scaling
+    network_mode: host
+    environment:
+      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
+      SINK_KIND: "mqtt"
+      BROKER_HOST: "localhost"
+      ROS_DOMAIN_ID: "42"
+    volumes:
+      - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
+      - ./results:/artifacts
+    entrypoint: ["/usr/local/bin/sink_entrypoint.sh"]
+    depends_on:
+      - broker
+
+  consumer:
+    image: ros2-scaling-consumer:local
+    network_mode: host
+    command:
+      - "--broker=mqtt"
+      - "--mqtt-host=localhost"
+      - "--mqtt-port=1883"
+      - "--warmup=10"
+      - "--duration=60"
+      - "--output=/artifacts/consumer.jsonl"
+    volumes:
+      - ./results:/artifacts
+    depends_on:
+      - broker
+      - sink
+
+  robot:
+    image: ros2-scaling-robot:local
+    network_mode: host
+    environment:
+      BAG_PATH: "/data/bag"
+      RATE_HZ: "10"
+      ROS_DOMAIN_ID: "42"
+    volumes:
+      - "${BAG_PATH:?BAG_PATH is required}:/data/bag:ro"
+    depends_on:
+      - sink
