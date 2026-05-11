@@ -41,6 +41,7 @@ services:
       SINK_KIND: "kafka"
       BROKER_HOST: "localhost"
       ROS_DOMAIN_ID: "42"
+      KAFKA_FAIR_LATENCY: "${KAFKA_FAIR_LATENCY:-0}"
     volumes:
       - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
       - ../../../tools/benchmark:/host_tools/benchmark:ro

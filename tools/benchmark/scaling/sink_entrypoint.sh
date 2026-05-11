@@ -35,6 +35,15 @@ case "${SINK_KIND}" in
         EXE="kafka_sink_node_exe"
         NODE_NAME="kafka_sink"
         METRICS_TOPIC="/kafka_sink/metrics"
+        # Fair-comparison mode: when KAFKA_FAIR_LATENCY=1, configure the Kafka
+        # producer with semantics matching MQTT qos=1 (broker ack only) and no
+        # batching, so we measure transport overhead rather than the gap between
+        # default tuning choices.
+        FAIR_PARAMS=""
+        if [[ "${KAFKA_FAIR_LATENCY:-0}" == "1" ]]; then
+            FAIR_PARAMS="    kafka.acks: \"1\"
+    kafka.linger_ms: 0"
+        fi
         cat > "${PARAMS_FILE}" <<EOF
 ${NODE_NAME}:
   ros__parameters:
@@ -45,6 +54,7 @@ $(printf '%s\n' "${SUBS_YAML}" | sed 's/^/      /')
     kafka.topic_prefix: ros2
     kafka.drop_when_full: true
     kafka.strict_startup: false
+${FAIR_PARAMS}
     metrics.enabled: true
     metrics.interval_ms: 1000
 EOF
