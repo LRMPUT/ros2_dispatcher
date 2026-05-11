@@ -76,3 +76,77 @@ class BagLooper:
             self._open_reader()
         _topic, data, _t = self._reader.read_next()
         return deserialize_message(data, self._msg_class)
+
+
+import argparse
+import os
+import socket
+import time
+
+import rclpy
+from rclpy.node import Node
+
+
+def derive_robot_id_from_hostname() -> int:
+    """Compose --scale assigns hostnames like '<project>-robot-3'. Take the trailing int."""
+    host = socket.gethostname()
+    parts = host.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    return 0
+
+
+class RobotReplay(Node):
+    def __init__(self, robot_id: int, bag_path: str, rate_hz: float) -> None:
+        super().__init__(f"robot_replay_{robot_id}")
+        self._robot_id = robot_id
+        self._rate_hz = rate_hz
+        self._looper = BagLooper(bag_path, topic_type="sensor_msgs/msg/NavSatFix")
+        self._pub = self.create_publisher(NavSatFix, f"/robot_{robot_id}/gnss", 10)
+        self._timer = self.create_timer(1.0 / rate_hz, self._tick)
+        self.get_logger().info(
+            f"Replaying bag={bag_path} as robot_id={robot_id} at {rate_hz} Hz"
+        )
+
+    def _tick(self) -> None:
+        msg = next(self._looper)
+        shift_navsatfix(msg, self._robot_id)
+        restamp_ns(msg, time.time_ns())
+        self._pub.publish(msg)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--robot-id",
+        type=int,
+        default=int(os.environ.get("ROBOT_ID", "-1")),
+        help="If <0, derived from hostname",
+    )
+    parser.add_argument(
+        "--bag-path",
+        default=os.environ.get("BAG_PATH"),
+        help="Path to a rosbag2 directory containing NavSatFix messages",
+    )
+    parser.add_argument(
+        "--rate-hz",
+        type=float,
+        default=float(os.environ.get("RATE_HZ", "10")),
+    )
+    args = parser.parse_args()
+
+    if not args.bag_path:
+        raise SystemExit("BAG_PATH (env or --bag-path) is required")
+    robot_id = args.robot_id if args.robot_id >= 0 else derive_robot_id_from_hostname()
+
+    rclpy.init()
+    node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
