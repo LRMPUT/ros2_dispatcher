@@ -46,18 +46,25 @@ class BagLooper:
     def _open_reader(self) -> None:
         if self._reader is not None:
             del self._reader
-        self._reader = rosbag2_py.SequentialReader()
-        storage_options = rosbag2_py.StorageOptions(uri=self._bag_path, storage_id="sqlite3")
-        converter_options = rosbag2_py.ConverterOptions("", "")
-        self._reader.open(storage_options, converter_options)
-        # Filter to topics matching our type (the bag may contain other types)
-        topics_meta = self._reader.get_all_topics_and_types()
-        wanted = [m.name for m in topics_meta if m.type == self._topic_type_str]
-        if not wanted:
-            raise RuntimeError(
-                f"No topic of type {self._topic_type_str} found in {self._bag_path}"
-            )
-        self._reader.set_filter(rosbag2_py.StorageFilter(topics=wanted))
+        try:
+            self._reader = rosbag2_py.SequentialReader()
+            storage_options = rosbag2_py.StorageOptions(uri=self._bag_path, storage_id="sqlite3")
+            converter_options = rosbag2_py.ConverterOptions("", "")
+            self._reader.open(storage_options, converter_options)
+            # Filter to topics matching our type (the bag may contain other types)
+            topics_meta = self._reader.get_all_topics_and_types()
+            wanted = [m.name for m in topics_meta if m.type == self._topic_type_str]
+            if not wanted:
+                raise RuntimeError(
+                    f"No topic of type {self._topic_type_str} found in {self._bag_path}"
+                )
+            self._reader.set_filter(rosbag2_py.StorageFilter(topics=wanted))
+        except Exception as e:
+            # Mark iterator as permanently broken. Re-opening failed (bag deleted,
+            # corrupted, or permission denied mid-loop). Next __next__ will fail
+            # with a clear error, not an AttributeError on a half-open reader.
+            self._reader = None
+            raise RuntimeError(f"BagLooper failed to re-open {self._bag_path}: {e}") from e
 
     def __iter__(self):
         return self
