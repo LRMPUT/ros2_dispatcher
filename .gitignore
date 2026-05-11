@@ -39,3 +39,4 @@ Thumbs.db
 # Scalability experiment outputs
 tools/benchmark/scaling/results/*
 !tools/benchmark/scaling/results/.gitkeep
+tools/benchmark/scaling/test_data/test_bag/
