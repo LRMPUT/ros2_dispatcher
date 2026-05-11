@@ -16,14 +16,18 @@ from typing import IO
 
 from rclpy.serialization import deserialize_message
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import NavSatFix, PointCloud2
+from sensor_msgs.msg import LaserScan, NavSatFix, PointCloud2
 
 
 TYPE_CONFIG = {
     "navsatfix":   (NavSatFix,   "gnss"),
     "odometry":    (Odometry,    "odom"),
+    "laserscan":   (LaserScan,   "scan"),
     "pointcloud2": (PointCloud2, "points"),
 }
+
+# suffix → (short_type_name, python_class)
+SUFFIX_TO_TYPE = {suffix: (short, cls) for short, (cls, suffix) in TYPE_CONFIG.items()}
 
 
 def _build_kafka_re(suffix: str):
@@ -78,15 +82,39 @@ def _now_ns() -> int:
     return time.time_ns()
 
 
+def _kafka_topic_to_robot_and_class(topic: str):
+    """Return (robot_id, python_class) for a `ros2.robot_<i>.<suffix>` topic.
+    Used for multi-topic dispatch.  Returns None if topic doesn't match."""
+    m = re.match(r"^ros2\.robot_(\d+)\.(gnss|odom|scan|points)$", topic)
+    if not m:
+        return None
+    suffix = m.group(2)
+    short, cls = SUFFIX_TO_TYPE[suffix]
+    return int(m.group(1)), cls
+
+
+def _mqtt_topic_to_robot_and_class(topic: str):
+    m = re.match(r"^ros2/robot_(\d+)/(gnss|odom|scan|points)$", topic)
+    if not m:
+        return None
+    suffix = m.group(2)
+    short, cls = SUFFIX_TO_TYPE[suffix]
+    return int(m.group(1)), cls
+
+
 def _consume_kafka(
     bootstrap: str,
     pattern: str,
     warmup_s: float,
     duration_s: float,
     out: IO[str],
-    msg_class,
-    topic_re,
+    msg_class=None,
+    topic_re=None,
+    multi: bool = False,
 ) -> None:
+    """Consume from Kafka. In single-type mode pass msg_class+topic_re; in
+    multi-topic mode pass multi=True and the function dispatches by topic
+    suffix."""
     from confluent_kafka import Consumer
 
     consumer = Consumer(
@@ -112,8 +140,15 @@ def _consume_kafka(
         if elapsed < warmup_s:
             continue
         try:
-            decoded = deserialize_message(msg.value(), msg_class)
-            robot_id = robot_id_from_kafka_topic(msg.topic(), regex=topic_re)
+            if multi:
+                lookup = _kafka_topic_to_robot_and_class(msg.topic())
+                if lookup is None:
+                    continue
+                robot_id, cls = lookup
+                decoded = deserialize_message(msg.value(), cls)
+            else:
+                decoded = deserialize_message(msg.value(), msg_class)
+                robot_id = robot_id_from_kafka_topic(msg.topic(), regex=topic_re)
         except (ValueError, Exception):  # noqa: BLE001
             continue
         t0_ns = extract_t0_ns(decoded)
@@ -128,8 +163,9 @@ def _consume_mqtt(
     warmup_s: float,
     duration_s: float,
     out: IO[str],
-    msg_class,
-    topic_re,
+    msg_class=None,
+    topic_re=None,
+    multi: bool = False,
 ) -> None:
     import paho.mqtt.client as mqtt
 
@@ -141,8 +177,15 @@ def _consume_mqtt(
             return
         t1_ns = _now_ns()
         try:
-            decoded = deserialize_message(msg.payload, msg_class)
-            robot_id = robot_id_from_mqtt_topic(msg.topic, regex=topic_re)
+            if multi:
+                lookup = _mqtt_topic_to_robot_and_class(msg.topic)
+                if lookup is None:
+                    return
+                robot_id, cls = lookup
+                decoded = deserialize_message(msg.payload, cls)
+            else:
+                decoded = deserialize_message(msg.payload, msg_class)
+                robot_id = robot_id_from_mqtt_topic(msg.topic, regex=topic_re)
         except (ValueError, Exception):  # noqa: BLE001
             return
         t0_ns = extract_t0_ns(decoded)
@@ -165,8 +208,9 @@ def main() -> None:
     parser.add_argument("--bootstrap", default="localhost:9092", help="Kafka bootstrap")
     parser.add_argument("--mqtt-host", default="localhost")
     parser.add_argument("--mqtt-port", type=int, default=1883)
-    parser.add_argument("--msg-type", choices=sorted(TYPE_CONFIG.keys()), default="navsatfix",
-                        help="Which message type to deserialize and how to derive the topic pattern.")
+    parser.add_argument("--msg-type",
+                        choices=sorted(TYPE_CONFIG.keys()) + ["multi"], default="navsatfix",
+                        help="Message type to deserialize. 'multi' dispatches by topic suffix.")
     parser.add_argument("--kafka-pattern", default=None,
                         help="Override Kafka regex (default derived from --msg-type).")
     parser.add_argument("--mqtt-pattern", default=None,
@@ -176,21 +220,38 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="JSONL output path")
     args = parser.parse_args()
 
-    msg_class, suffix = TYPE_CONFIG[args.msg_type]
-    kafka_pattern = args.kafka_pattern or rf"^ros2\.robot_.*\.{suffix}$"
-    mqtt_pattern = args.mqtt_pattern or f"ros2/+/{suffix}"
-    kafka_re = _build_kafka_re(suffix)
-    mqtt_re = _build_mqtt_re(suffix)
-
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
-    with open(args.output, "w", buffering=1) as out:
-        if args.broker == "kafka":
-            _consume_kafka(args.bootstrap, kafka_pattern, args.warmup, args.duration, out,
-                           msg_class, kafka_re)
-        else:
-            _consume_mqtt(args.mqtt_host, args.mqtt_port, mqtt_pattern, args.warmup, args.duration,
-                          out, msg_class, mqtt_re)
+    multi = (args.msg_type == "multi")
+
+    if multi:
+        # Subscribe to all 4 suffixes at once; dispatch by topic.
+        kafka_pattern = args.kafka_pattern or r"^ros2\.robot_[0-9]+\.(gnss|odom|scan|points)$"
+        # MQTT wildcards: + matches one whole topic level. We need separate
+        # subscriptions per suffix because MQTT cannot OR multiple suffixes.
+        # The consumer calls subscribe() once with a list of (topic, qos) tuples.
+        mqtt_pattern = args.mqtt_pattern or "ros2/+/+"
+        with open(args.output, "w", buffering=1) as out:
+            if args.broker == "kafka":
+                _consume_kafka(args.bootstrap, kafka_pattern, args.warmup, args.duration, out,
+                               multi=True)
+            else:
+                _consume_mqtt(args.mqtt_host, args.mqtt_port, mqtt_pattern, args.warmup, args.duration,
+                              out, multi=True)
+    else:
+        msg_class, suffix = TYPE_CONFIG[args.msg_type]
+        kafka_pattern = args.kafka_pattern or rf"^ros2\.robot_.*\.{suffix}$"
+        mqtt_pattern = args.mqtt_pattern or f"ros2/+/{suffix}"
+        kafka_re = _build_kafka_re(suffix)
+        mqtt_re = _build_mqtt_re(suffix)
+
+        with open(args.output, "w", buffering=1) as out:
+            if args.broker == "kafka":
+                _consume_kafka(args.bootstrap, kafka_pattern, args.warmup, args.duration, out,
+                               msg_class=msg_class, topic_re=kafka_re)
+            else:
+                _consume_mqtt(args.mqtt_host, args.mqtt_port, mqtt_pattern, args.warmup, args.duration,
+                              out, msg_class=msg_class, topic_re=mqtt_re)
 
 
 if __name__ == "__main__":

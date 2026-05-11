@@ -11,20 +11,34 @@ set -euo pipefail
 
 mkdir -p "${RESULTS_DIR}"
 
-# Map MSG_TYPE → (ROS msg type string, topic suffix)
+# Build list of (ROS_MSG_TYPE, TOPIC_SUFFIX) pairs to subscribe to per robot.
+# Single-stream modes: one pair. Multi-topic mode: four pairs.
+declare -a PAIRS=()
+add_pair() { PAIRS+=("$1|$2"); }
 case "${MSG_TYPE}" in
-    navsatfix)   ROS_MSG_TYPE="sensor_msgs/msg/NavSatFix";   TOPIC_SUFFIX="gnss" ;;
-    odometry)    ROS_MSG_TYPE="nav_msgs/msg/Odometry";       TOPIC_SUFFIX="odom" ;;
-    pointcloud2) ROS_MSG_TYPE="sensor_msgs/msg/PointCloud2"; TOPIC_SUFFIX="points" ;;
+    navsatfix)   add_pair "sensor_msgs/msg/NavSatFix"   "gnss"   ;;
+    odometry)    add_pair "nav_msgs/msg/Odometry"       "odom"   ;;
+    laserscan)   add_pair "sensor_msgs/msg/LaserScan"   "scan"   ;;
+    pointcloud2) add_pair "sensor_msgs/msg/PointCloud2" "points" ;;
+    multi)
+        add_pair "sensor_msgs/msg/NavSatFix"   "gnss"
+        add_pair "nav_msgs/msg/Odometry"       "odom"
+        add_pair "sensor_msgs/msg/LaserScan"   "scan"
+        add_pair "sensor_msgs/msg/PointCloud2" "points"
+        ;;
     *) echo "Unknown MSG_TYPE: ${MSG_TYPE}" >&2; exit 1 ;;
 esac
 
 # ── Generate subscriptions_yaml content ──
+# For multi-topic mode this is 4×NUM_ROBOTS entries.
 SUBS_YAML=""
 for ((i = 1; i <= NUM_ROBOTS; i++)); do
-    SUBS_YAML+="- topic_name: /robot_${i}/${TOPIC_SUFFIX}
-  msg_type: ${ROS_MSG_TYPE}
+    for pair in "${PAIRS[@]}"; do
+        IFS='|' read -r ros_type suffix <<< "${pair}"
+        SUBS_YAML+="- topic_name: /robot_${i}/${suffix}
+  msg_type: ${ros_type}
 "
+    done
 done
 
 # ── Source the workspace built inside the image ──
