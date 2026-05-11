@@ -15,30 +15,47 @@ import time
 from typing import IO
 
 from rclpy.serialization import deserialize_message
-from sensor_msgs.msg import NavSatFix
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import NavSatFix, PointCloud2
 
 
-_KAFKA_ROBOT_RE = re.compile(r"^ros2\.robot_(\d+)\.gnss$")
-_MQTT_ROBOT_RE = re.compile(r"^ros2/robot_(\d+)/gnss$")
+TYPE_CONFIG = {
+    "navsatfix":   (NavSatFix,   "gnss"),
+    "odometry":    (Odometry,    "odom"),
+    "pointcloud2": (PointCloud2, "points"),
+}
+
+
+def _build_kafka_re(suffix: str):
+    return re.compile(rf"^ros2\.robot_(\d+)\.{re.escape(suffix)}$")
+
+
+def _build_mqtt_re(suffix: str):
+    return re.compile(rf"^ros2/robot_(\d+)/{re.escape(suffix)}$")
+
+
+# Backwards-compatible NavSatFix-specific helpers (kept so the unit tests work).
+_KAFKA_ROBOT_RE = _build_kafka_re("gnss")
+_MQTT_ROBOT_RE = _build_mqtt_re("gnss")
 
 
 def deserialize_navsatfix(data: bytes) -> NavSatFix:
     return deserialize_message(data, NavSatFix)
 
 
-def extract_t0_ns(msg: NavSatFix) -> int:
+def extract_t0_ns(msg) -> int:
     return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
 
 
-def robot_id_from_kafka_topic(topic: str) -> int:
-    m = _KAFKA_ROBOT_RE.match(topic)
+def robot_id_from_kafka_topic(topic: str, regex=None) -> int:
+    m = (regex or _KAFKA_ROBOT_RE).match(topic)
     if not m:
         raise ValueError(f"Unrecognised Kafka topic: {topic}")
     return int(m.group(1))
 
 
-def robot_id_from_mqtt_topic(topic: str) -> int:
-    m = _MQTT_ROBOT_RE.match(topic)
+def robot_id_from_mqtt_topic(topic: str, regex=None) -> int:
+    m = (regex or _MQTT_ROBOT_RE).match(topic)
     if not m:
         raise ValueError(f"Unrecognised MQTT topic: {topic}")
     return int(m.group(1))
@@ -67,6 +84,8 @@ def _consume_kafka(
     warmup_s: float,
     duration_s: float,
     out: IO[str],
+    msg_class,
+    topic_re,
 ) -> None:
     from confluent_kafka import Consumer
 
@@ -76,12 +95,10 @@ def _consume_kafka(
             "group.id": f"e2e-consumer-{int(time.time())}",
             "auto.offset.reset": "latest",
             "enable.auto.commit": False,
-            # Default is 5 min; refresh fast so we pick up new robot topics as
-            # they're created at experiment start.
             "topic.metadata.refresh.interval.ms": 1000,
         }
     )
-    consumer.subscribe([pattern])  # confluent-kafka supports regex with `^` prefix
+    consumer.subscribe([pattern])
 
     t_start = time.monotonic()
     while True:
@@ -93,13 +110,13 @@ def _consume_kafka(
             continue
         t1_ns = _now_ns()
         if elapsed < warmup_s:
-            continue  # skip warmup window
+            continue
         try:
-            nav = deserialize_navsatfix(msg.value())
-            robot_id = robot_id_from_kafka_topic(msg.topic())
+            decoded = deserialize_message(msg.value(), msg_class)
+            robot_id = robot_id_from_kafka_topic(msg.topic(), regex=topic_re)
         except (ValueError, Exception):  # noqa: BLE001
             continue
-        t0_ns = extract_t0_ns(nav)
+        t0_ns = extract_t0_ns(decoded)
         out.write(format_row(robot_id, msg.topic(), t0_ns, t1_ns, len(msg.value())) + "\n")
     consumer.close()
 
@@ -111,6 +128,8 @@ def _consume_mqtt(
     warmup_s: float,
     duration_s: float,
     out: IO[str],
+    msg_class,
+    topic_re,
 ) -> None:
     import paho.mqtt.client as mqtt
 
@@ -122,11 +141,11 @@ def _consume_mqtt(
             return
         t1_ns = _now_ns()
         try:
-            nav = deserialize_navsatfix(msg.payload)
-            robot_id = robot_id_from_mqtt_topic(msg.topic)
+            decoded = deserialize_message(msg.payload, msg_class)
+            robot_id = robot_id_from_mqtt_topic(msg.topic, regex=topic_re)
         except (ValueError, Exception):  # noqa: BLE001
             return
-        t0_ns = extract_t0_ns(nav)
+        t0_ns = extract_t0_ns(decoded)
         out.write(format_row(robot_id, msg.topic, t0_ns, t1_ns, len(msg.payload)) + "\n")
 
     client = mqtt.Client()
@@ -146,24 +165,32 @@ def main() -> None:
     parser.add_argument("--bootstrap", default="localhost:9092", help="Kafka bootstrap")
     parser.add_argument("--mqtt-host", default="localhost")
     parser.add_argument("--mqtt-port", type=int, default=1883)
-    parser.add_argument("--kafka-pattern", default="^ros2\\.robot_.*\\.gnss$")
-    # MQTT wildcards: `+` matches one whole topic level, so we cannot put it
-    # inside `robot_X`. Use `+` for the whole second level and rely on
-    # robot_id_from_mqtt_topic regex to filter received topics.
-    parser.add_argument("--mqtt-pattern", default="ros2/+/gnss")
+    parser.add_argument("--msg-type", choices=sorted(TYPE_CONFIG.keys()), default="navsatfix",
+                        help="Which message type to deserialize and how to derive the topic pattern.")
+    parser.add_argument("--kafka-pattern", default=None,
+                        help="Override Kafka regex (default derived from --msg-type).")
+    parser.add_argument("--mqtt-pattern", default=None,
+                        help="Override MQTT wildcard (default derived from --msg-type).")
     parser.add_argument("--warmup", type=float, default=10.0)
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--output", required=True, help="JSONL output path")
     args = parser.parse_args()
 
-    # Graceful shutdown so files flush
+    msg_class, suffix = TYPE_CONFIG[args.msg_type]
+    kafka_pattern = args.kafka_pattern or rf"^ros2\.robot_.*\.{suffix}$"
+    mqtt_pattern = args.mqtt_pattern or f"ros2/+/{suffix}"
+    kafka_re = _build_kafka_re(suffix)
+    mqtt_re = _build_mqtt_re(suffix)
+
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     with open(args.output, "w", buffering=1) as out:
         if args.broker == "kafka":
-            _consume_kafka(args.bootstrap, args.kafka_pattern, args.warmup, args.duration, out)
+            _consume_kafka(args.bootstrap, kafka_pattern, args.warmup, args.duration, out,
+                           msg_class, kafka_re)
         else:
-            _consume_mqtt(args.mqtt_host, args.mqtt_port, args.mqtt_pattern, args.warmup, args.duration, out)
+            _consume_mqtt(args.mqtt_host, args.mqtt_port, mqtt_pattern, args.warmup, args.duration,
+                          out, msg_class, mqtt_re)
 
 
 if __name__ == "__main__":

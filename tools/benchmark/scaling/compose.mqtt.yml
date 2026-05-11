@@ -20,6 +20,7 @@ services:
       SINK_KIND: "mqtt"
       BROKER_HOST: "localhost"
       ROS_DOMAIN_ID: "42"
+      MSG_TYPE: "${MSG_TYPE:-navsatfix}"
     volumes:
       - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
       - ../../../tools/benchmark:/host_tools/benchmark:ro
@@ -39,6 +40,7 @@ services:
       - "--warmup=10"
       - "--duration=60"
       - "--output=/artifacts/consumer.jsonl"
+      - "--msg-type=${MSG_TYPE:-navsatfix}"
     volumes:
       - ./results:/artifacts
     depends_on:

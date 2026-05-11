@@ -41,6 +41,7 @@ services:
       SINK_KIND: "kafka"
       BROKER_HOST: "localhost"
       ROS_DOMAIN_ID: "42"
+      MSG_TYPE: "${MSG_TYPE:-navsatfix}"
       KAFKA_FAIR_LATENCY: "${KAFKA_FAIR_LATENCY:-0}"
     volumes:
       - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
@@ -60,6 +61,7 @@ services:
       - "--warmup=10"
       - "--duration=60"
       - "--output=/artifacts/consumer.jsonl"
+      - "--msg-type=${MSG_TYPE:-navsatfix}"
     volumes:
       - ./results:/artifacts
     depends_on:

@@ -30,6 +30,7 @@ for ((i = 1; i <= N; i++)); do
       BAG_PATH: "/data/bag"
       RATE_HZ: "10"
       ROS_DOMAIN_ID: "42"
+      MSG_TYPE: "\${MSG_TYPE:-navsatfix}"
     volumes:
       - "\${BAG_PATH:?BAG_PATH is required}:/data/bag:ro"
     depends_on:

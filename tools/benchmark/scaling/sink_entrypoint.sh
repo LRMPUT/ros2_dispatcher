@@ -7,14 +7,23 @@ set -euo pipefail
 : "${SINK_KIND:?SINK_KIND must be 'kafka' or 'mqtt'}"
 : "${RESULTS_DIR:=/artifacts}"
 : "${METRICS_RECORDER_PATH:=/host_tools/benchmark/metrics_recorder.py}"
+: "${MSG_TYPE:=navsatfix}"
 
 mkdir -p "${RESULTS_DIR}"
+
+# Map MSG_TYPE → (ROS msg type string, topic suffix)
+case "${MSG_TYPE}" in
+    navsatfix)   ROS_MSG_TYPE="sensor_msgs/msg/NavSatFix";   TOPIC_SUFFIX="gnss" ;;
+    odometry)    ROS_MSG_TYPE="nav_msgs/msg/Odometry";       TOPIC_SUFFIX="odom" ;;
+    pointcloud2) ROS_MSG_TYPE="sensor_msgs/msg/PointCloud2"; TOPIC_SUFFIX="points" ;;
+    *) echo "Unknown MSG_TYPE: ${MSG_TYPE}" >&2; exit 1 ;;
+esac
 
 # ── Generate subscriptions_yaml content ──
 SUBS_YAML=""
 for ((i = 1; i <= NUM_ROBOTS; i++)); do
-    SUBS_YAML+="- topic_name: /robot_${i}/gnss
-  msg_type: sensor_msgs/msg/NavSatFix
+    SUBS_YAML+="- topic_name: /robot_${i}/${TOPIC_SUFFIX}
+  msg_type: ${ROS_MSG_TYPE}
 "
 done
 

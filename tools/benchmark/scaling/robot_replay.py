@@ -18,10 +18,20 @@ import rclpy
 from rclpy.node import Node
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
-from sensor_msgs.msg import NavSatFix
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import NavSatFix, PointCloud2
 
 LAT_OFFSET_DEG_PER_ID = 0.0001  # ~11 m at the equator; close enough
 LON_OFFSET_DEG_PER_ID = 0.0001
+
+
+# Maps the short MSG_TYPE env value (set by orchestrator) to:
+#   (ros_msg_type_string, python_class, output_topic_suffix)
+TYPE_CONFIG = {
+    "navsatfix":   ("sensor_msgs/msg/NavSatFix",   NavSatFix,   "gnss"),
+    "odometry":    ("nav_msgs/msg/Odometry",       Odometry,    "odom"),
+    "pointcloud2": ("sensor_msgs/msg/PointCloud2", PointCloud2, "points"),
+}
 
 
 def shift_navsatfix(msg: NavSatFix, robot_id: int) -> None:
@@ -30,8 +40,19 @@ def shift_navsatfix(msg: NavSatFix, robot_id: int) -> None:
     msg.longitude += LON_OFFSET_DEG_PER_ID * robot_id
 
 
-def restamp_ns(msg: NavSatFix, t_ns: int) -> None:
-    """Set header.stamp to a wall-clock ns timestamp. In-place."""
+def shift_message(msg, robot_id: int, msg_type: str) -> None:
+    """Apply per-robot offset where meaningful for the chosen type."""
+    if msg_type == "navsatfix":
+        shift_navsatfix(msg, robot_id)
+    # Odometry / PointCloud2: no per-robot shift (the topic name already
+    # distinguishes robots; spatial offset of pose or cloud is not load-relevant).
+
+
+def restamp_ns(msg, t_ns: int) -> None:
+    """Set header.stamp to a wall-clock ns timestamp. In-place.
+
+    Works for any message with a std_msgs/Header at `.header`.
+    """
     msg.header.stamp.sec = t_ns // 1_000_000_000
     msg.header.stamp.nanosec = t_ns % 1_000_000_000
 
@@ -95,20 +116,25 @@ def derive_robot_id_from_hostname() -> int:
 
 
 class RobotReplay(Node):
-    def __init__(self, robot_id: int, bag_path: str, rate_hz: float) -> None:
+    def __init__(self, robot_id: int, bag_path: str, rate_hz: float, msg_type: str = "navsatfix") -> None:
         super().__init__(f"robot_replay_{robot_id}")
+        if msg_type not in TYPE_CONFIG:
+            raise ValueError(f"Unknown msg_type {msg_type!r}; expected one of {list(TYPE_CONFIG)}")
+        type_str, type_class, suffix = TYPE_CONFIG[msg_type]
         self._robot_id = robot_id
         self._rate_hz = rate_hz
-        self._looper = BagLooper(bag_path, topic_type="sensor_msgs/msg/NavSatFix")
-        self._pub = self.create_publisher(NavSatFix, f"/robot_{robot_id}/gnss", 10)
+        self._msg_type = msg_type
+        self._looper = BagLooper(bag_path, topic_type=type_str)
+        self._pub = self.create_publisher(type_class, f"/robot_{robot_id}/{suffix}", 10)
         self._timer = self.create_timer(1.0 / rate_hz, self._tick)
         self.get_logger().info(
-            f"Replaying bag={bag_path} as robot_id={robot_id} at {rate_hz} Hz"
+            f"Replaying bag={bag_path} as robot_id={robot_id} at {rate_hz} Hz "
+            f"(type={msg_type}, topic=/robot_{robot_id}/{suffix})"
         )
 
     def _tick(self) -> None:
         msg = next(self._looper)
-        shift_navsatfix(msg, self._robot_id)
+        shift_message(msg, self._robot_id, self._msg_type)
         restamp_ns(msg, time.time_ns())
         self._pub.publish(msg)
 
@@ -137,6 +163,12 @@ def main() -> None:
         type=float,
         default=float(os.environ.get("RATE_HZ", "10")),
     )
+    parser.add_argument(
+        "--msg-type",
+        choices=sorted(TYPE_CONFIG.keys()),
+        default=os.environ.get("MSG_TYPE", "navsatfix"),
+        help="Which message type to replay (navsatfix/odometry/pointcloud2).",
+    )
     args = parser.parse_args()
 
     if not args.bag_path:
@@ -150,14 +182,15 @@ def main() -> None:
             from rclpy.executors import MultiThreadedExecutor
             executor = MultiThreadedExecutor(num_threads=min(args.num_robots, 8))
             for robot_id in range(1, args.num_robots + 1):
-                node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+                node = RobotReplay(robot_id, args.bag_path, args.rate_hz, args.msg_type)
                 nodes.append(node)
                 executor.add_node(node)
-            print(f"[robot_replay] Fleet mode: {args.num_robots} robots @ {args.rate_hz} Hz", flush=True)
+            print(f"[robot_replay] Fleet mode: {args.num_robots} robots @ {args.rate_hz} Hz "
+                  f"type={args.msg_type}", flush=True)
             executor.spin()
         else:
             robot_id = args.robot_id if args.robot_id >= 0 else derive_robot_id_from_hostname()
-            node = RobotReplay(robot_id, args.bag_path, args.rate_hz)
+            node = RobotReplay(robot_id, args.bag_path, args.rate_hz, args.msg_type)
             nodes.append(node)
             rclpy.spin(node)
     finally:
