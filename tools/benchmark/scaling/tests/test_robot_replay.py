@@ -2,6 +2,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sensor_msgs.msg import NavSatFix
@@ -46,3 +48,34 @@ def test_restamp_ns_zero():
     restamp_ns(msg, t_ns=0)
     assert msg.header.stamp.sec == 0
     assert msg.header.stamp.nanosec == 0
+
+
+TEST_BAG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "test_data",
+    "test_bag",
+)
+
+
+@pytest.mark.skipif(not os.path.exists(TEST_BAG), reason="test bag not generated")
+def test_bag_looper_yields_navsatfix_messages():
+    from robot_replay import BagLooper
+
+    looper = BagLooper(TEST_BAG, topic_type="sensor_msgs/msg/NavSatFix")
+    msg = next(looper)
+    assert hasattr(msg, "latitude")
+    assert hasattr(msg, "longitude")
+
+
+@pytest.mark.skipif(not os.path.exists(TEST_BAG), reason="test bag not generated")
+def test_bag_looper_loops_past_end():
+    from robot_replay import BagLooper
+
+    looper = BagLooper(TEST_BAG, topic_type="sensor_msgs/msg/NavSatFix")
+    # The fixture bag has 50 messages — iterate 75 and confirm no StopIteration
+    msgs = []
+    for _ in range(75):
+        msgs.append(next(looper))
+    assert len(msgs) == 75
+    # Looped → first and 51st messages should have identical latitude
+    assert msgs[0].latitude == msgs[50].latitude
