@@ -147,7 +147,10 @@ def main() -> None:
     parser.add_argument("--mqtt-host", default="localhost")
     parser.add_argument("--mqtt-port", type=int, default=1883)
     parser.add_argument("--kafka-pattern", default="^ros2\\.robot_.*\\.gnss$")
-    parser.add_argument("--mqtt-pattern", default="ros2/robot_+/gnss")
+    # MQTT wildcards: `+` matches one whole topic level, so we cannot put it
+    # inside `robot_X`. Use `+` for the whole second level and rely on
+    # robot_id_from_mqtt_topic regex to filter received topics.
+    parser.add_argument("--mqtt-pattern", default="ros2/+/gnss")
     parser.add_argument("--warmup", type=float, default=10.0)
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--output", required=True, help="JSONL output path")
