@@ -1,13 +1,15 @@
--- Minimal pass-through query for paradigm-latency smoke test.
--- Measures the overhead of routing through ksqlDB without UDF compute.
--- A real geofence query (with the INGEOFENCE UDF) is a separate change.
+-- ksqlDB pipeline for the Phase 2 scalability matrix.
+--
+-- Query: bounding-box geofence.  The bag's real coordinates are around
+-- lat≈46.34, lon≈3.43 (Massif Central, France).  The per-robot lat/lon
+-- shift in robot_replay.py is 1e-4 deg × robot_id, so at robot_id=50 the
+-- shifted point is at most (46.345, 3.435) — still well within the box
+-- [46.30..46.40, 3.40..3.50].  The WHERE matches every input row, so the
+-- output stream's rate equals the input rate and we isolate the paradigm
+-- engine's processing cost from any filtering effect.
 
 SET 'auto.offset.reset' = 'earliest';
 
--- Note: robot_id is declared as a VALUE column (not KEY) so the SELECT
--- propagates it into the downstream JSON value. ksqlDB drops bare KEY
--- columns from the output value, which would silently break the consumer's
--- robot_id extraction.
 CREATE STREAM ros_gps_fix_stream (
   robot_id VARCHAR,
   latitude DOUBLE,
@@ -35,4 +37,6 @@ SELECT
   t0_ns,
   'OUTSIDE' AS msg
 FROM ros_gps_fix_stream
+WHERE latitude  BETWEEN 46.0 AND 47.0
+  AND longitude BETWEEN 3.0  AND 4.0
 EMIT CHANGES;
