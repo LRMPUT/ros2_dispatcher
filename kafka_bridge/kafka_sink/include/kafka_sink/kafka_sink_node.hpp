@@ -41,6 +41,7 @@ struct SubscriptionConfig
   std::string topic_name;
   std::string msg_type;
   std::optional<std::string> kafka_name;
+  std::optional<std::string> kafka_key;
 };
 
 std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yaml_text);
@@ -95,6 +96,7 @@ private:
     std::string ros_topic;
     std::string msg_type;
     std::string kafka_topic;
+    std::vector<uint8_t> message_key_bytes;
     PayloadFormat payload_format{PayloadFormat::CDR};
     const rosidl_message_type_support_t * rmw_type_support{nullptr};
     const rosidl_message_type_support_t * introspection_type_support{nullptr};

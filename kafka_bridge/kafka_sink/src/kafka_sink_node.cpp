@@ -427,7 +427,25 @@ std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yam
       }
     }
 
-    configs.push_back({topic_name, msg_type, kafka_name});
+    std::optional<std::string> kafka_key;
+    if (auto kafka_key_node = entry["kafka_key"]) {
+      auto key_str = kafka_key_node.as<std::string>();
+      key_str.erase(
+        key_str.begin(),
+        std::find_if(key_str.begin(), key_str.end(), [](unsigned char ch) {
+          return !std::isspace(static_cast<int>(ch));
+        }));
+      key_str.erase(
+        std::find_if(key_str.rbegin(), key_str.rend(), [](unsigned char ch) {
+          return !std::isspace(static_cast<int>(ch));
+        }).base(),
+        key_str.end());
+      if (!key_str.empty()) {
+        kafka_key = std::move(key_str);
+      }
+    }
+
+    configs.push_back({topic_name, msg_type, kafka_name, kafka_key});
   }
 
   return configs;
@@ -928,9 +946,6 @@ bool KafkaSinkNode::build_subscriptions()
     return true;
   }
 
-  const std::vector<uint8_t> message_key_bytes(
-    kafka_parameters_.message_key.begin(), kafka_parameters_.message_key.end());
-
   active_subscriptions_.reserve(configured_subscriptions_.size());
   for (const auto & config : configured_subscriptions_) {
     active_subscriptions_.emplace_back();
@@ -943,6 +958,9 @@ bool KafkaSinkNode::build_subscriptions()
     const std::string & kafka_topic_name =
       config.kafka_name ? *config.kafka_name : config.topic_name;
     runtime.runtime_state->kafka_topic = map_kafka_topic(kafka_topic_name);
+    const std::string & key_str =
+      config.kafka_key ? *config.kafka_key : kafka_parameters_.message_key;
+    runtime.runtime_state->message_key_bytes.assign(key_str.begin(), key_str.end());
     runtime.runtime_state->payload_format = kafka_parameters_.payload_format;
     if (kafka_parameters_.payload_format == PayloadFormat::JSON) {
       // Attempt to load type support for JSON serialization
@@ -972,7 +990,7 @@ bool KafkaSinkNode::build_subscriptions()
 
     auto runtime_state = runtime.runtime_state;
     auto callback =
-      [this, runtime_state, message_key_bytes](std::shared_ptr<rclcpp::SerializedMessage> msg) {
+      [this, runtime_state](std::shared_ptr<rclcpp::SerializedMessage> msg) {
         if (!is_active_.load(std::memory_order_acquire)) {
           return;
         }
@@ -1069,11 +1087,13 @@ bool KafkaSinkNode::build_subscriptions()
         }
 
         // Echo key and topic name
-        std::string key_str(message_key_bytes.begin(), message_key_bytes.end());
         RCLCPP_DEBUG(
           this->get_logger(),
           "[kafka_sink_callback] key='%s', topic='%s'",
-          key_str.c_str(), runtime_state->kafka_topic.c_str());
+          std::string(
+            runtime_state->message_key_bytes.begin(),
+            runtime_state->message_key_bytes.end()).c_str(),
+          runtime_state->kafka_topic.c_str());
 
         std::vector<kafka_client::KafkaHeader> headers;
         headers.reserve(1);
@@ -1083,7 +1103,7 @@ bool KafkaSinkNode::build_subscriptions()
         runtime_state->bytes_total.fetch_add(static_cast<uint64_t>(value.size()), std::memory_order_relaxed);
 
         auto result = producer->send(
-          runtime_state->kafka_topic, message_key_bytes, value, stamp_ms, headers);
+          runtime_state->kafka_topic, runtime_state->message_key_bytes, value, stamp_ms, headers);
         auto t2 = std::chrono::steady_clock::now();
         auto send_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
         runtime_state->send_time_ns_accum.fetch_add(static_cast<uint64_t>(send_ns), std::memory_order_relaxed);
