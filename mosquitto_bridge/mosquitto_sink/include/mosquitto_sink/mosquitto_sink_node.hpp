@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rcpputils/shared_library.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "std_msgs/msg/string.hpp"
@@ -101,6 +102,10 @@ private:
     PayloadFormat payload_format{PayloadFormat::CDR};
     const rosidl_message_type_support_t * rmw_type_support{nullptr};
     const rosidl_message_type_support_t * introspection_type_support{nullptr};
+    // Keep shared library handles alive so the type support pointers above
+    // remain valid (libraries are dlclose()d when all shared_ptrs drop).
+    std::shared_ptr<rcpputils::SharedLibrary> rmw_ts_lib;
+    std::shared_ptr<rcpputils::SharedLibrary> introspection_ts_lib;
     std::atomic<int64_t> next_log_time_ns{0};
     std::atomic<uint64_t> sent_ok{0};
     std::atomic<uint64_t> dropped{0};

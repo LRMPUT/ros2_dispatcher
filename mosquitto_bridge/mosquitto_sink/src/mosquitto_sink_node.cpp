@@ -398,10 +398,14 @@ bool serialize_message_to_json(
 }
 
 // Load type support dynamically from a message type string (e.g., "geometry_msgs/msg/PoseStamped")
+// The caller MUST keep ts_lib_out and introspection_ts_lib_out alive for as long as the
+// returned pointers are used — dropping them triggers dlclose() and dangling pointers.
 bool load_type_support(
   const std::string & msg_type,
   const rosidl_message_type_support_t ** rmw_type_support,
-  const rosidl_message_type_support_t ** introspection_type_support)
+  const rosidl_message_type_support_t ** introspection_type_support,
+  std::shared_ptr<rcpputils::SharedLibrary> * ts_lib_out = nullptr,
+  std::shared_ptr<rcpputils::SharedLibrary> * introspection_ts_lib_out = nullptr)
 {
   try {
     auto ts_lib = rosbag2_cpp::get_typesupport_library(
@@ -418,7 +422,14 @@ bool load_type_support(
     *introspection_type_support = rosbag2_cpp::get_typesupport_handle(
       msg_type, "rosidl_typesupport_introspection_cpp", introspection_ts_lib);
 
-    return (*rmw_type_support != nullptr) && (*introspection_type_support != nullptr);
+    if (!*rmw_type_support || !*introspection_type_support) {
+      return false;
+    }
+
+    if (ts_lib_out) {*ts_lib_out = ts_lib;}
+    if (introspection_ts_lib_out) {*introspection_ts_lib_out = introspection_ts_lib;}
+
+    return true;
   } catch (...) {
     return false;
   }
@@ -1058,7 +1069,9 @@ bool MosquittoSinkNode::build_subscriptions()
       if (!load_type_support(
             config.msg_type,
             &runtime.runtime_state->rmw_type_support,
-            &runtime.runtime_state->introspection_type_support))
+            &runtime.runtime_state->introspection_type_support,
+            &runtime.runtime_state->rmw_ts_lib,
+            &runtime.runtime_state->introspection_ts_lib))
       {
         RCLCPP_WARN(
           get_logger(),
@@ -1237,19 +1250,12 @@ bool MosquittoSinkNode::build_subscriptions()
     {
       // The subscription was created successfully, so the type support should be available
       try {
-        auto ts_lib = rosbag2_cpp::get_typesupport_library(
-          runtime.msg_type, "rosidl_typesupport_cpp");
-        auto introspection_ts_lib = rosbag2_cpp::get_typesupport_library(
-          runtime.msg_type, "rosidl_typesupport_introspection_cpp");
-
-        if (ts_lib && introspection_ts_lib) {
-          runtime.runtime_state->rmw_type_support =
-            rosbag2_cpp::get_typesupport_handle(
-              runtime.msg_type, "rosidl_typesupport_cpp", ts_lib);
-          runtime.runtime_state->introspection_type_support =
-            rosbag2_cpp::get_typesupport_handle(
-              runtime.msg_type, "rosidl_typesupport_introspection_cpp", introspection_ts_lib);
-        }
+        load_type_support(
+          runtime.msg_type,
+          &runtime.runtime_state->rmw_type_support,
+          &runtime.runtime_state->introspection_type_support,
+          &runtime.runtime_state->rmw_ts_lib,
+          &runtime.runtime_state->introspection_ts_lib);
       } catch (...) {
         runtime.runtime_state->rmw_type_support = nullptr;
         runtime.runtime_state->introspection_type_support = nullptr;
