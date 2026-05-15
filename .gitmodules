@@ -1,0 +1,3 @@
+[submodule "GIS4IoRT-ksqlDB"]
+	path = GIS4IoRT-ksqlDB
+	url = https://github.com/AntoniSopata/GIS4IoRT-ksqlDB.git
