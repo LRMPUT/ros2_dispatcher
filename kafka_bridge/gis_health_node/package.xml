@@ -15,7 +15,7 @@
   <depend>lifecycle_msgs</depend>
   <depend>launch_ros</depend>
   <depend>kafka_client</depend>
-  <depend>nlohmann_json</depend>
+  <depend>nlohmann-json-dev</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
