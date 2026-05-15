@@ -1,0 +1,49 @@
+# MQTT stack. Bring up with:
+#   BAG_PATH=/path/to/bag NUM_ROBOTS=10 docker compose -f compose.mqtt.yml up -d
+# Robot service: one container with NUM_ROBOTS rclpy publishers (fleet mode).
+services:
+
+  broker:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+    volumes:
+      - ../../../mosquitto_bridge/mosquitto_brocker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  sink:
+    image: ros2-kafka-dispatcher:scaling
+    network_mode: host
+    ipc: host
+    user: "0:0"  # write /artifacts (host owned 1000:1000) without uid mismatch
+    environment:
+      NUM_ROBOTS: "${NUM_ROBOTS:?NUM_ROBOTS is required}"
+      SINK_KIND: "mqtt"
+      BROKER_HOST: "localhost"
+      ROS_DOMAIN_ID: "42"
+      MSG_TYPE: "${MSG_TYPE:-navsatfix}"
+    volumes:
+      - ./sink_entrypoint.sh:/usr/local/bin/sink_entrypoint.sh:ro
+      - ../../../tools/benchmark:/host_tools/benchmark:ro
+      - ./results:/artifacts
+    entrypoint: ["/usr/local/bin/sink_entrypoint.sh"]
+    depends_on:
+      - broker
+
+  consumer:
+    image: ros2-scaling-consumer:local
+    network_mode: host
+    ipc: host
+    command:
+      - "--broker=mqtt"
+      - "--mqtt-host=localhost"
+      - "--mqtt-port=1883"
+      - "--warmup=10"
+      - "--duration=60"
+      - "--output=/artifacts/consumer.jsonl"
+      - "--msg-type=${MSG_TYPE:-navsatfix}"
+    volumes:
+      - ./results:/artifacts
+    depends_on:
+      - broker
+      - sink
+

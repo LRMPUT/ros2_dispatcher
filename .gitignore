@@ -35,3 +35,13 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Scalability experiment outputs
+tools/benchmark/scaling/results/*
+!tools/benchmark/scaling/results/.gitkeep
+tools/benchmark/scaling/test_data/test_bag/
+
+# Bulk experiment artifacts — too large for git, archive separately.
+tools/benchmark/scaling/results_archive/
+tools/benchmark/scaling/results_edge_partial/
+scalability_results_*.tar.gz
