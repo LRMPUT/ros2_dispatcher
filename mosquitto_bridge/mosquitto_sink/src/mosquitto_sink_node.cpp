@@ -434,6 +434,81 @@ bool load_type_support(
     return false;
   }
 }
+// Deserializes a CDR message, overwrites header.frame_id with frame_id, and re-serializes
+// into output. Returns true if the field was found and output was updated.
+// Used for nebula parsing: lets the consumer identify which robot produced the message.
+bool inject_frame_id_into_cdr(
+  const rclcpp::SerializedMessage & serialized,
+  const rosidl_message_type_support_t * rmw_type_support,
+  const rosidl_message_type_support_t * introspection_type_support,
+  const std::string & frame_id,
+  std::vector<uint8_t> & output)
+{
+  const auto * members =
+    static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+    introspection_type_support->data);
+  if (!members || members->size_of_ == 0) {
+    return false;
+  }
+
+  void * message = malloc(members->size_of_);
+  if (!message) {
+    return false;
+  }
+  memset(message, 0, members->size_of_);
+  if (members->init_function) {
+    rosidl_runtime_cpp::MessageInitialization init;
+    members->init_function(message, init);
+  }
+
+  const rmw_serialized_message_t & rmw_serialized = serialized.get_rcl_serialized_message();
+  if (rmw_deserialize(&rmw_serialized, rmw_type_support, message) != RMW_RET_OK) {
+    if (members->fini_function) {members->fini_function(message);}
+    free(message);
+    return false;
+  }
+
+  bool modified = false;
+  for (size_t i = 0; i < members->member_count_; ++i) {
+    const auto & member = members->members_[i];
+    if (std::string(member.name_) == "header" &&
+      member.type_id_ == rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE &&
+      member.members_)
+    {
+      const auto * header_members =
+        static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+        member.members_->data);
+      uint8_t * header_ptr = static_cast<uint8_t *>(message) + member.offset_;
+      for (size_t j = 0; j < header_members->member_count_; ++j) {
+        const auto & hm = header_members->members_[j];
+        if (std::string(hm.name_) == "frame_id" &&
+          hm.type_id_ == rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING)
+        {
+          *reinterpret_cast<std::string *>(header_ptr + hm.offset_) = frame_id;
+          modified = true;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  if (modified) {
+    rclcpp::SerializedMessage new_serialized_msg;
+    if (rmw_serialize(
+        message, rmw_type_support,
+        &new_serialized_msg.get_rcl_serialized_message()) == RMW_RET_OK)
+    {
+      const auto & rcl_msg = new_serialized_msg.get_rcl_serialized_message();
+      output.assign(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
+    }
+  }
+
+  if (members->fini_function) {members->fini_function(message);}
+  free(message);
+  return modified;
+}
+
 }  // namespace
 
 struct MosquittoSinkNode::MqttRuntime
@@ -463,6 +538,20 @@ MosquittoSinkNode::ActiveSubscription & MosquittoSinkNode::ActiveSubscription::o
     runtime_state = std::move(other.runtime_state);
   }
   return *this;
+}
+
+bool apply_message_key_to_json(std::string & json_payload, const std::string & message_key)
+{
+  if (message_key.empty()) {
+    return false;
+  }
+  auto j = nlohmann::json::parse(json_payload, nullptr, false);
+  if (j.is_discarded() || !j.contains("header") || !j["header"].is_object()) {
+    return false;
+  }
+  j["header"]["frame_id"] = message_key;
+  json_payload = j.dump();
+  return true;
 }
 
 std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yaml_text)
@@ -577,6 +666,8 @@ MosquittoSinkNode::MosquittoSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("mqtt.lwt_payload", mqtt_parameters_.lwt_payload);
   this->declare_parameter<int>("mqtt.lwt_qos", mqtt_parameters_.lwt_qos);
   this->declare_parameter<bool>("mqtt.lwt_retain", mqtt_parameters_.lwt_retain);
+  // optional: when set, overrides header.frame_id in published messages (for nebula parsing)
+  this->declare_parameter<std::string>("mqtt.message_key", "");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&MosquittoSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -775,6 +866,8 @@ rcl_interfaces::msg::SetParametersResult MosquittoSinkNode::on_parameters_set(
         pending_mqtt.lwt_qos = param.as_int();
       } else if (name == "mqtt.lwt_retain") {
         pending_mqtt.lwt_retain = param.as_bool();
+      } else if (name == "mqtt.message_key") {
+        pending_mqtt.message_key = param.as_string();
       }
     } else if (name.rfind("metrics.", 0) == 0) {
       const auto & current_state = this->get_current_state();
@@ -942,6 +1035,7 @@ bool MosquittoSinkNode::configure_mqtt_parameters(std::string * error_message)
   pending.lwt_payload = this->get_parameter("mqtt.lwt_payload").as_string();
   pending.lwt_qos = this->get_parameter("mqtt.lwt_qos").as_int();
   pending.lwt_retain = this->get_parameter("mqtt.lwt_retain").as_bool();
+  pending.message_key = this->get_parameter("mqtt.message_key").as_string();
 
   if (!validate_mqtt_parameters(pending, error_message)) {
     return false;
@@ -1063,9 +1157,12 @@ bool MosquittoSinkNode::build_subscriptions()
     const std::string & mqtt_topic_name =
       config.mqtt_name ? *config.mqtt_name : config.topic_name;
     runtime.runtime_state->mqtt_topic = map_mqtt_topic(mqtt_topic_name);
+    runtime.runtime_state->message_key = mqtt_parameters_.message_key;
     runtime.runtime_state->payload_format = mqtt_parameters_.payload_format;
-    if (mqtt_parameters_.payload_format == PayloadFormat::JSON) {
-      // Attempt to load type support for JSON serialization
+    if (mqtt_parameters_.payload_format == PayloadFormat::JSON ||
+      !mqtt_parameters_.message_key.empty())
+    {
+      // Load type support for JSON serialization or CDR frame_id injection (nebula parsing)
       if (!load_type_support(
             config.msg_type,
             &runtime.runtime_state->rmw_type_support,
@@ -1073,16 +1170,23 @@ bool MosquittoSinkNode::build_subscriptions()
             &runtime.runtime_state->rmw_ts_lib,
             &runtime.runtime_state->introspection_ts_lib))
       {
-        RCLCPP_WARN(
-          get_logger(),
-          "Failed to load type support for JSON serialization of '%s'. "
-          "Falling back to CDR format.",
-          config.msg_type.c_str());
-        runtime.runtime_state->payload_format = PayloadFormat::CDR;
+        if (mqtt_parameters_.payload_format == PayloadFormat::JSON) {
+          RCLCPP_WARN(
+            get_logger(),
+            "Failed to load type support for JSON serialization of '%s'. "
+            "Falling back to CDR format.",
+            config.msg_type.c_str());
+          runtime.runtime_state->payload_format = PayloadFormat::CDR;
+        } else {
+          RCLCPP_WARN(
+            get_logger(),
+            "Failed to load type support for '%s'; message_key frame_id injection disabled.",
+            config.msg_type.c_str());
+        }
       } else {
         RCLCPP_INFO(
           get_logger(),
-          "Successfully loaded type support for JSON serialization of '%s'",
+          "Successfully loaded type support for '%s'",
           config.msg_type.c_str());
       }
     }
@@ -1123,10 +1227,21 @@ bool MosquittoSinkNode::build_subscriptions()
               runtime_state->log_label.c_str(), json_error.c_str());
             return;
           }
+          apply_message_key_to_json(json_payload, runtime_state->message_key);
           value.assign(json_payload.begin(), json_payload.end());
         } else {
           value.resize(msg->size());
           std::memcpy(value.data(), msg->get_rcl_serialized_message().buffer, msg->size());
+          if (!runtime_state->message_key.empty() &&
+            runtime_state->rmw_type_support && runtime_state->introspection_type_support)
+          {
+            inject_frame_id_into_cdr(
+              *msg,
+              runtime_state->rmw_type_support,
+              runtime_state->introspection_type_support,
+              runtime_state->message_key,
+              value);
+          }
         }
 
         auto t1 = std::chrono::steady_clock::now();
@@ -1243,9 +1358,10 @@ bool MosquittoSinkNode::build_subscriptions()
       return false;
     }
 
-    // If JSON serialization is requested but type support wasn't loaded yet,
-    // try to get it from the subscription
-    if (runtime.runtime_state->payload_format == PayloadFormat::JSON &&
+    // If type support is still needed (JSON or message_key injection) but wasn't loaded yet,
+    // try once more now that the subscription exists
+    if ((runtime.runtime_state->payload_format == PayloadFormat::JSON ||
+      !runtime.runtime_state->message_key.empty()) &&
       !runtime.runtime_state->rmw_type_support)
     {
       // The subscription was created successfully, so the type support should be available
@@ -1269,12 +1385,19 @@ bool MosquittoSinkNode::build_subscriptions()
           "Successfully loaded type support (post-subscription) for JSON serialization of '%s'",
           runtime.msg_type.c_str());
       } else {
-        RCLCPP_WARN(
-          get_logger(),
-          "Failed to load type support even after subscription creation for '%s'. "
-          "Falling back to CDR format.",
-          runtime.msg_type.c_str());
-        runtime.runtime_state->payload_format = PayloadFormat::CDR;
+        if (runtime.runtime_state->payload_format == PayloadFormat::JSON) {
+          RCLCPP_WARN(
+            get_logger(),
+            "Failed to load type support even after subscription creation for '%s'. "
+            "Falling back to CDR format.",
+            runtime.msg_type.c_str());
+          runtime.runtime_state->payload_format = PayloadFormat::CDR;
+        } else {
+          RCLCPP_WARN(
+            get_logger(),
+            "Failed to load type support for '%s'; message_key frame_id injection disabled.",
+            runtime.msg_type.c_str());
+        }
       }
     }
   }

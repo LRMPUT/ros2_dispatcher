@@ -44,6 +44,11 @@ struct SubscriptionConfig
 
 std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yaml_text);
 
+// Parses json_payload, overrides header.frame_id with message_key, re-serializes into
+// json_payload, and returns true. Returns false unchanged when message_key is empty,
+// the JSON is invalid, or the message has no header field (for nebula parsing).
+bool apply_message_key_to_json(std::string & json_payload, const std::string & message_key);
+
 class MOSQUITTO_SINK_PUBLIC MosquittoSinkNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
@@ -91,6 +96,8 @@ private:
     std::string lwt_payload{"mosquitto_sink disconnected"};
     int lwt_qos{1};
     bool lwt_retain{false};
+    // optional: when set, overrides header.frame_id in published messages (for nebula parsing)
+    std::string message_key;
   };
 
   struct SubscriptionRuntime
@@ -99,6 +106,8 @@ private:
     std::string ros_topic;
     std::string msg_type;
     std::string mqtt_topic;
+    // optional: when set, overrides header.frame_id in published messages (for nebula parsing)
+    std::string message_key;
     PayloadFormat payload_format{PayloadFormat::CDR};
     const rosidl_message_type_support_t * rmw_type_support{nullptr};
     const rosidl_message_type_support_t * introspection_type_support{nullptr};

@@ -47,3 +47,50 @@ TEST(ParseSubscriptions, InvalidYamlThrows) {
 
   EXPECT_THROW(mosquitto_sink::parse_subscriptions_yaml(yaml_text), std::runtime_error);
 }
+
+TEST(MessageKey, EmptyKeyIsNoop) {
+  std::string payload = R"({"header":{"frame_id":"original"},"data":1})";
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "");
+  EXPECT_FALSE(modified);
+  EXPECT_NE(payload.find("original"), std::string::npos);
+}
+
+TEST(MessageKey, OverridesFrameId) {
+  std::string payload =
+    R"({"header":{"stamp":{"sec":0,"nanosec":0},"frame_id":"old_frame"},"data":1})";
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "robot_2");
+  EXPECT_TRUE(modified);
+  EXPECT_NE(payload.find("robot_2"), std::string::npos);
+  EXPECT_EQ(payload.find("old_frame"), std::string::npos);
+}
+
+TEST(MessageKey, InjectsFrameIdWhenAbsent) {
+  std::string payload = R"({"header":{"stamp":{"sec":0,"nanosec":0}},"data":1})";
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "robot_3");
+  EXPECT_TRUE(modified);
+  EXPECT_NE(payload.find("robot_3"), std::string::npos);
+}
+
+TEST(MessageKey, NoHeaderIsNoop) {
+  std::string original = R"({"data":42})";
+  std::string payload = original;
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}
+
+TEST(MessageKey, InvalidJsonIsNoop) {
+  std::string original = "not json at all";
+  std::string payload = original;
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}
+
+TEST(MessageKey, HeaderNotObjectIsNoop) {
+  std::string original = R"({"header":"flat_string","data":1})";
+  std::string payload = original;
+  bool modified = mosquitto_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}

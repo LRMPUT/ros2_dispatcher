@@ -28,3 +28,5 @@
     mqtt.lwt_payload: "mosquitto_sink disconnected"
     mqtt.lwt_qos: 1
     mqtt.lwt_retain: false
+    # optional: when set, overrides header.frame_id in published messages (for nebula parsing)
+    # mqtt.message_key: ""
