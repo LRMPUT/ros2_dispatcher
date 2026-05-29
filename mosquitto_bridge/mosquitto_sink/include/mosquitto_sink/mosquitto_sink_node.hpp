@@ -16,6 +16,7 @@
 #define MOSQUITTO_SINK__MOSQUITTO_SINK_NODE_HPP_
 
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -48,6 +49,11 @@ std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yam
 // json_payload, and returns true. Returns false unchanged when message_key is empty,
 // the JSON is invalid, or the message has no header field (for nebula parsing).
 bool apply_message_key_to_json(std::string & json_payload, const std::string & message_key);
+
+// Attaches the staged-latency envelope `_ts` ({t0_ns from header.stamp, t1_ns})
+// to a JSON payload at publish time. Returns false (payload unchanged) when the
+// payload is not parseable JSON.
+bool apply_ts_envelope_to_json(std::string & json_payload, int64_t t1_ns);
 
 class MOSQUITTO_SINK_PUBLIC MosquittoSinkNode : public rclcpp_lifecycle::LifecycleNode
 {

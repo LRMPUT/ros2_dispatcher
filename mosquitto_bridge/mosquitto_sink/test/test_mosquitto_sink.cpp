@@ -94,3 +94,29 @@ TEST(MessageKey, HeaderNotObjectIsNoop) {
   EXPECT_FALSE(modified);
   EXPECT_EQ(payload, original);
 }
+
+TEST(TsEnvelope, AddsT0FromHeaderAndT1) {
+  std::string payload =
+    R"({"header":{"stamp":{"sec":2,"nanosec":5},"frame_id":"robot_1"},"data":1})";
+  bool modified = mosquitto_sink::apply_ts_envelope_to_json(payload, 9000);
+  EXPECT_TRUE(modified);
+  EXPECT_NE(payload.find(R"("_ts")"), std::string::npos);
+  EXPECT_NE(payload.find(R"("t0_ns":2000000005)"), std::string::npos);
+  EXPECT_NE(payload.find(R"("t1_ns":9000)"), std::string::npos);
+}
+
+TEST(TsEnvelope, T1OnlyWhenHeaderStampZero) {
+  std::string payload = R"({"header":{"stamp":{"sec":0,"nanosec":0}},"data":1})";
+  bool modified = mosquitto_sink::apply_ts_envelope_to_json(payload, 1234);
+  EXPECT_TRUE(modified);
+  EXPECT_EQ(payload.find(R"("t0_ns")"), std::string::npos);  // omitted
+  EXPECT_NE(payload.find(R"("t1_ns":1234)"), std::string::npos);
+}
+
+TEST(TsEnvelope, InvalidJsonIsNoop) {
+  std::string original = "not-json";
+  std::string payload = original;
+  bool modified = mosquitto_sink::apply_ts_envelope_to_json(payload, 1);
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}
