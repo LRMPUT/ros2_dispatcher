@@ -1,0 +1,82 @@
+# Layered on top of compose.kafka.yml plus the gen_robots_compose.sh output:
+#
+#   docker compose -f compose.kafka.yml -f compose.ksqldb.yml -f <robots>.yml up -d
+#
+# Adds:
+#   - ksqldb-server  (Confluent ksqlDB on host network, connects to localhost:9092)
+#   - ksqldb-init    (loads ksql-setup.sql once, then tail -f /dev/null)
+#   - ksqldb-bridge  (fan-in from ros2.robot_*.gnss CDR → ros_gps_fix JSON)
+# Overrides:
+#   - consumer       (read robot_geofence_alerts JSON; same artifact path)
+services:
+
+  ksqldb-server:
+    image: confluentinc/ksqldb-server:0.29.0
+    network_mode: host
+    ipc: host
+    environment:
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_BOOTSTRAP_SERVERS: "localhost:9092"
+      KSQL_KSQL_SERVICE_ID: "scaling-ksqldb-"
+      KSQL_KSQL_STREAMS_AUTO_OFFSET_RESET: "earliest"
+    depends_on:
+      - broker
+    healthcheck:
+      # ksqlDB image has no curl. Use bash /dev/tcp to probe port 8088.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8088'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  ksqldb-init:
+    image: confluentinc/ksqldb-cli:0.29.0
+    network_mode: host
+    ipc: host
+    depends_on:
+      ksqldb-server:
+        condition: service_healthy
+    volumes:
+      - ./ksqldb/ksql-setup.sql:/tmp/ksql-setup.sql:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        until curl -sf http://localhost:8088/info > /dev/null; do
+          echo '[ksqldb-init] waiting for ksqldb-server...'
+          sleep 1
+        done
+        echo '[ksqldb-init] running ksql-setup.sql'
+        ksql http://localhost:8088 < /tmp/ksql-setup.sql
+        echo '[ksqldb-init] done; keeping container alive'
+        tail -f /dev/null
+    restart: "no"
+
+  ksqldb-bridge:
+    image: ros2-scaling-ksqldb-bridge:local
+    network_mode: host
+    ipc: host
+    environment:
+      KAFKA_BOOTSTRAP: "localhost:9092"
+      # librdkafka uses POSIX regex (no \d, no \w). Use [0-9]+.
+      INPUT_PATTERN: "^ros2\\.robot_[0-9]+\\.gnss$$"
+      OUTPUT_TOPIC: "ros_gps_fix"
+    depends_on:
+      - ksqldb-init
+
+  # Override the default scaling consumer with a ksqlDB-output consumer.
+  consumer:
+    image: ros2-scaling-ksqldb-consumer:local
+    network_mode: host
+    ipc: host
+    user: "0:0"
+    command:
+      - "--bootstrap=localhost:9092"
+      - "--topic=robot_geofence_alerts"
+      - "--warmup=10"
+      - "--duration=60"
+      - "--output=/artifacts/consumer.jsonl"
+    volumes:
+      - ./results:/artifacts
+    depends_on:
+      - ksqldb-bridge
