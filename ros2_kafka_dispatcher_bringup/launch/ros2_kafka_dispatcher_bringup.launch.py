@@ -23,7 +23,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def launch_setup(context, *args, **kwargs):
-    rviz_cfg_path = PathJoinSubstitution([FindPackageShare('ros2_kafka_dispatcher_bringup'), 'rviz/default.rviz'])
+    rviz_cfg_path = PathJoinSubstitution(
+        [FindPackageShare('ros2_kafka_dispatcher_bringup'), 'rviz/default.rviz'])
 
     rviz2 = Node(
         package='rviz2',
