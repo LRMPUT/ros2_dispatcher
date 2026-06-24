@@ -23,6 +23,7 @@
 #include <sstream>
 #include <utility>
 
+#include "kafka_client/ros_type_validation.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/qos.hpp"
 #include "rosbag2_cpp/typesupport_helpers.hpp"
@@ -52,13 +53,15 @@ std::unordered_map<std::string, std::string> parse_topic_mappings(
     auto trim = [](std::string & entry) {
         entry.erase(
           entry.begin(),
-          std::find_if(entry.begin(), entry.end(), [](unsigned char ch) {
-            return !std::isspace(static_cast<int>(ch));
-          }));
+          std::find_if(
+            entry.begin(), entry.end(), [](unsigned char ch) {
+              return !std::isspace(static_cast<int>(ch));
+            }));
         entry.erase(
-          std::find_if(entry.rbegin(), entry.rend(), [](unsigned char ch) {
-            return !std::isspace(static_cast<int>(ch));
-          }).base(),
+          std::find_if(
+            entry.rbegin(), entry.rend(), [](unsigned char ch) {
+              return !std::isspace(static_cast<int>(ch));
+            }).base(),
           entry.end());
       };
     trim(key);
@@ -99,7 +102,7 @@ std::string json_escape(const std::string & input)
       default:
         // Escape other control characters (U+0000 to U+001F) as unicode sequences
         if (ch < 0x20) {
-          escaped << "\\u00" << std::hex << std::uppercase << std::setw(2) 
+          escaped << "\\u00" << std::hex << std::uppercase << std::setw(2)
                   << std::setfill('0') << static_cast<int>(ch) << std::dec;
         } else {
           escaped << ch;
@@ -128,6 +131,7 @@ KafkaSourceNode::KafkaSourceNode(const rclcpp::NodeOptions & options)
   declare_parameter("kafka.group_id", kafka_parameters_.group_id);
   declare_parameter("kafka.topic_pattern", kafka_parameters_.topic_pattern);
   declare_parameter("kafka.offset_reset", kafka_parameters_.offset_reset);
+  declare_parameter("kafka.allowed_types", kafka_parameters_.allowed_types);
   declare_parameter("ros_topic_prefix", ros_topic_prefix_);
   declare_parameter("qos_depth", qos_depth_);
   declare_parameter("metrics.enabled", metrics_enabled_);
@@ -173,7 +177,7 @@ KafkaSourceNode::CallbackReturn KafkaSourceNode::on_activate(
   reset_metrics_timer();
 
   running_.store(true, std::memory_order_release);
-  consumer_thread_ = std::thread([this]() { poll_loop(); });
+  consumer_thread_ = std::thread([this]() {poll_loop();});
   return CallbackReturn::SUCCESS;
 }
 
@@ -245,6 +249,8 @@ rcl_interfaces::msg::SetParametersResult KafkaSourceNode::on_parameters_set(
       kafka_parameters_.topic_pattern = parameter.as_string();
     } else if (parameter.get_name() == "kafka.offset_reset") {
       kafka_parameters_.offset_reset = parameter.as_string();
+    } else if (parameter.get_name() == "kafka.allowed_types") {
+      kafka_parameters_.allowed_types = parameter.as_string_array();
     } else if (parameter.get_name() == "ros_topic_prefix") {
       ros_topic_prefix_ = parameter.as_string();
     } else if (parameter.get_name() == "qos_depth") {
@@ -278,6 +284,7 @@ bool KafkaSourceNode::configure_from_parameters(std::string * error_message)
   get_parameter("kafka.group_id", kafka_parameters_.group_id);
   get_parameter("kafka.topic_pattern", kafka_parameters_.topic_pattern);
   get_parameter("kafka.offset_reset", kafka_parameters_.offset_reset);
+  get_parameter("kafka.allowed_types", kafka_parameters_.allowed_types);
   get_parameter("ros_topic_prefix", ros_topic_prefix_);
   get_parameter("qos_depth", qos_depth_);
   get_parameter("metrics.enabled", metrics_enabled_);
@@ -316,6 +323,14 @@ bool KafkaSourceNode::validate_parameters(std::string * error_message) const
       *error_message = "kafka.offset_reset must be 'latest' or 'earliest'.";
     }
     return false;
+  }
+  for (const auto & ros_type : kafka_parameters_.allowed_types) {
+    if (!kafka_client::is_valid_ros_type_name(ros_type)) {
+      if (error_message) {
+        *error_message = "kafka.allowed_types contains invalid ROS type: " + ros_type;
+      }
+      return false;
+    }
   }
   if (qos_depth_ <= 0) {
     if (error_message) {
@@ -374,7 +389,7 @@ bool KafkaSourceNode::start_consumer(std::string * error_message)
     return false;
   }
 
-  std::vector<std::string> topics{ kafka_parameters_.topic_pattern };
+  std::vector<std::string> topics{kafka_parameters_.topic_pattern};
   RdKafka::ErrorCode err = consumer->subscribe(topics);
   if (err != RdKafka::ERR_NO_ERROR) {
     if (error_message) {
@@ -500,7 +515,8 @@ void KafkaSourceNode::process_message(RdKafka::Message * message)
   if (!ensure_type_support(ros_type, &type_support, &type_error)) {
     metrics->failed.fetch_add(1, std::memory_order_relaxed);
     if (should_log_throttled(next_error_log_time_ns_)) {
-      RCLCPP_WARN(get_logger(), "Failed to load type support for '%s': %s",
+      RCLCPP_WARN(
+        get_logger(), "Failed to load type support for '%s': %s",
         ros_type.c_str(), type_error.c_str());
     }
     return;
@@ -539,6 +555,17 @@ bool KafkaSourceNode::ensure_type_support(
   TypeSupportCacheEntry * entry,
   std::string * error_message)
 {
+  if (!kafka_client::is_allowed_ros_type_name(ros_type, kafka_parameters_.allowed_types)) {
+    if (error_message) {
+      if (kafka_client::is_valid_ros_type_name(ros_type)) {
+        *error_message = "ROS type not allowed by kafka.allowed_types.";
+      } else {
+        *error_message = "Invalid ROS type name.";
+      }
+    }
+    return false;
+  }
+
   std::lock_guard<std::mutex> lock(cache_mutex_);
   auto it = type_support_cache_.find(ros_type);
   if (it != type_support_cache_.end()) {
@@ -742,7 +769,7 @@ void KafkaSourceNode::reset_metrics_timer()
   if (metrics_enabled_ && is_active_.load(std::memory_order_acquire)) {
     auto period = std::chrono::milliseconds(metrics_interval_ms_);
     metrics_timer_ = create_wall_timer(
-      period, [this]() { publish_metrics(); });
+      period, [this]() {publish_metrics();});
   }
 }
 

@@ -15,6 +15,9 @@
 #ifndef KAFKA_SOURCE__KAFKA_SOURCE_NODE_HPP_
 #define KAFKA_SOURCE__KAFKA_SOURCE_NODE_HPP_
 
+#include <rosidl_runtime_c/message_type_support_struct.h>
+#include <librdkafka/rdkafkacpp.h>
+
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -25,8 +28,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <librdkafka/rdkafkacpp.h>
-
 #include "kafka_source/visibility_control.hpp"
 #include "rcpputils/shared_library.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
@@ -35,7 +36,6 @@
 #include "rclcpp/serialized_message.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "rosidl_runtime_c/message_type_support_struct.h"
 
 namespace kafka_source
 {
@@ -61,6 +61,7 @@ private:
     std::string group_id{"ros2-kafka-source"};
     std::string topic_pattern{"^ros2\\..*"};
     std::string offset_reset{"latest"};
+    std::vector<std::string> allowed_types;
   };
 
   struct TopicMetrics

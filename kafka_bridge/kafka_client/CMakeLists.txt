@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_gtest REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(RDKAFKA REQUIRED rdkafka++)
@@ -44,5 +45,21 @@ install(DIRECTORY include/
 
 ament_export_targets(${PROJECT_NAME}_export HAS_LIBRARY_TARGET)
 ament_export_dependencies(Threads)
+
+if(BUILD_TESTING)
+  ament_add_gtest(test_kafka_producer
+    test/test_kafka_producer.cpp
+  )
+  target_link_libraries(test_kafka_producer
+    ${PROJECT_NAME}
+  )
+
+  ament_add_gtest(test_ros_type_validation
+    test/test_ros_type_validation.cpp
+  )
+  target_link_libraries(test_ros_type_validation
+    ${PROJECT_NAME}
+  )
+endif()
 
 ament_package()

@@ -15,6 +15,9 @@
 #ifndef KAFKA_CDR_TO_JSON__KAFKA_CDR_TO_JSON_NODE_HPP_
 #define KAFKA_CDR_TO_JSON__KAFKA_CDR_TO_JSON_NODE_HPP_
 
+#include <rosidl_runtime_c/message_type_support_struct.h>
+#include <librdkafka/rdkafkacpp.h>
+
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -25,8 +28,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <librdkafka/rdkafkacpp.h>
-
 #include "kafka_cdr_to_json/visibility_control.hpp"
 #include "kafka_client/kafka_producer.hpp"
 #include "rcpputils/shared_library.hpp"
@@ -34,7 +35,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "rosidl_runtime_c/message_type_support_struct.h"
 
 namespace kafka_cdr_to_json
 {
@@ -61,6 +61,7 @@ private:
     std::string input_topic_pattern{"^ros2\\..*"};
     std::string output_topic_prefix{"ros2_json"};
     std::string offset_reset{"latest"};
+    std::vector<std::string> allowed_types;
   };
 
   struct JsonParameters

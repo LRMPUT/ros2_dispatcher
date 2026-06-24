@@ -122,6 +122,7 @@ private:
   bool switch_mode(SelectionMode new_mode, const std::string & file_path, bool apply_now,
     std::string & error_out);
   bool apply_selection(const std::vector<TopicSelection> & topics, std::string & error_out);
+  bool rollback_failed_selection(std::string & error_out);
   bool apply_selection_to_sink(
     const std::string & sink_label,
     const std::string & sink_node_name,

@@ -300,188 +300,93 @@ void DispatcherControllerNode::handle_set_selection_mode(
   const dispatcher_controller::srv::SetSelectionMode::Request::SharedPtr request,
   dispatcher_controller::srv::SetSelectionMode::Response::SharedPtr response)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  bool valid{true};
-  auto mode = parse_mode(request->selection_mode, valid);
-  if (!valid) {
-    response->success = false;
-    response->message = "Invalid selection_mode. Use gui|file|all.";
-    return;
-  }
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool valid{true};
+    auto mode = parse_mode(request->selection_mode, valid);
+    if (!valid) {
+      response->success = false;
+      response->message = "Invalid selection_mode. Use gui|file|all.";
+      return;
+    }
 
-  std::string error;
-  if (!switch_mode(mode, request->selection_file_path, request->apply_now, error)) {
-    response->success = false;
-    response->message = error;
-    return;
-  }
+    std::string error;
+    if (!switch_mode(mode, request->selection_file_path, request->apply_now, error)) {
+      response->success = false;
+      response->message = error;
+      return;
+    }
 
-  selection_file_path_ = request->selection_file_path.empty() ?
-    selection_file_path_ : request->selection_file_path;
-  response->success = true;
-  response->message = "Mode switched to " + mode_to_string(mode);
+    selection_file_path_ = request->selection_file_path.empty() ?
+      selection_file_path_ : request->selection_file_path;
+    response->success = true;
+    response->message = "Mode switched to " + mode_to_string(mode);
+  } catch (const std::exception & ex) {
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = std::string("SetSelectionMode failed: ") + ex.what();
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  } catch (...) {
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = "SetSelectionMode failed: unknown exception";
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  }
 }
 
 void DispatcherControllerNode::handle_apply_selection(
   const dispatcher_controller::srv::ApplySelection::Request::SharedPtr request,
   dispatcher_controller::srv::ApplySelection::Response::SharedPtr response)
 {
-  // echo request
-  RCLCPP_DEBUG(
-    get_logger(), "ApplySelection request with %zu topics", request->topics.size());
-  for (const auto & topic : request->topics) {
+  try {
     RCLCPP_DEBUG(
-      get_logger(), "  - %s (%s)", topic.name.c_str(),
-      topic.type.empty() ? "unknown_type" : topic.type.c_str());
-  }
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (phase_ == ControllerPhase::BUSY) {
-    response->success = false;
-    response->message = "Controller busy";
-    return;
-  }
-  if (selection_mode_ != SelectionMode::GUI) {
-    response->success = false;
-    response->message = "Not in gui mode";
-    return;
-  }
+      get_logger(), "ApplySelection request with %zu topics", request->topics.size());
+    for (const auto & topic : request->topics) {
+      RCLCPP_DEBUG(
+        get_logger(), "  - %s (%s)", topic.name.c_str(),
+        topic.type.empty() ? "unknown_type" : topic.type.c_str());
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (phase_ == ControllerPhase::BUSY) {
+      response->success = false;
+      response->message = "Controller busy";
+      return;
+    }
+    if (selection_mode_ != SelectionMode::GUI) {
+      response->success = false;
+      response->message = "Not in gui mode";
+      return;
+    }
 
-  std::vector<TopicSelection> topics;
-  topics.reserve(request->topics.size());
-  for (const auto & topic : request->topics) {
-    TopicSelection selection;
-    selection.topic = topic;
-    topics.push_back(selection);
-  }
-  std::string error;
-  if (!infer_missing_types(topics, error)) {
-    response->success = false;
-    response->message = "Failed to infer topic types: " + error;
-    last_error_ = response->message;
-    last_error_stamp_ = now();
-    return;
-  }
-  if (!ensure_topic_limits(topics, error)) {
-    response->success = false;
-    response->message = error;
-    last_error_ = error;
-    last_error_stamp_ = now();
-    return;
-  }
-
-  phase_ = ControllerPhase::BUSY;
-  if (!apply_selection(topics, error)) {
-    phase_ = ControllerPhase::ERROR;
-    response->success = false;
-    response->message = error;
-    last_error_ = error;
-    last_error_stamp_ = now();
-    return;
-  }
-
-  last_gui_selection_.topics = topics;
-  last_gui_selection_.sink_topics = applied_selection_.sink_topics;
-  last_gui_selection_.timestamp = now();
-  phase_ = ControllerPhase::IDLE;
-  response->success = true;
-  response->message = "Selection applied";
-}
-
-void DispatcherControllerNode::handle_reload_selection(
-  const dispatcher_controller::srv::ReloadSelection::Request::SharedPtr request,
-  dispatcher_controller::srv::ReloadSelection::Response::SharedPtr response)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (phase_ == ControllerPhase::BUSY) {
-    response->success = false;
-    response->message = "Controller busy";
-    return;
-  }
-
-  std::vector<TopicSelection> selection;
-  std::string error;
-  bool apply_now = request->apply_now;
-  TopicToolsPlan plan;
-
-  if (selection_mode_ == SelectionMode::FILE) {
-    std::string path = request->selection_file_path.empty() ? selection_file_path_ :
-      request->selection_file_path;
-    if (!load_file_selection(path, selection, error)) {
+    std::vector<TopicSelection> topics;
+    topics.reserve(request->topics.size());
+    for (const auto & topic : request->topics) {
+      TopicSelection selection;
+      selection.topic = topic;
+      topics.push_back(selection);
+    }
+    std::string error;
+    if (!infer_missing_types(topics, error)) {
+      response->success = false;
+      response->message = "Failed to infer topic types: " + error;
+      last_error_ = response->message;
+      last_error_stamp_ = now();
+      return;
+    }
+    if (!ensure_topic_limits(topics, error)) {
       response->success = false;
       response->message = error;
       last_error_ = error;
       last_error_stamp_ = now();
       return;
     }
-    if (!infer_missing_types(selection, error)) {
-      response->success = false;
-      response->message = "Failed to infer types: " + error;
-      last_error_ = error;
-      last_error_stamp_ = now();
-      return;
-    }
-    if (!build_topic_tools_plan(selection, plan, error)) {
-      response->success = false;
-      response->message = error;
-      last_error_ = error;
-      last_error_stamp_ = now();
-      return;
-    }
-    last_file_selection_.topics = selection;
-    last_file_selection_.sink_topics = plan.sink_topics;
-    last_file_selection_.timestamp = now();
-  } else if (selection_mode_ == SelectionMode::ALL) {
-    if (!discover_all_topics(selection, error)) {
-      response->success = false;
-      response->message = error;
-      last_error_ = error;
-      last_error_stamp_ = now();
-      return;
-    }
-    if (!build_topic_tools_plan(selection, plan, error)) {
-      response->success = false;
-      response->message = error;
-      last_error_ = error;
-      last_error_stamp_ = now();
-      return;
-    }
-    last_all_selection_.topics = selection;
-    last_all_selection_.sink_topics = plan.sink_topics;
-    last_all_selection_.timestamp = now();
-  } else {  // GUI mode
-    if (last_gui_selection_.topics.empty()) {
-      response->success = false;
-      response->message = "No cached GUI selection to reload";
-      return;
-    }
-    selection = last_gui_selection_.topics;
-    plan.sink_topics = last_gui_selection_.sink_topics;
-    if (request->selection_file_path.size() > 0) {
-      RCLCPP_WARN(get_logger(), "selection_file_path ignored in gui mode reload");
-    }
-  }
 
-  if (plan.sink_topics.empty() && !selection.empty()) {
-    if (!build_topic_tools_plan(selection, plan, error)) {
-      response->success = false;
-      response->message = error;
-      last_error_ = error;
-      last_error_stamp_ = now();
-      return;
-    }
-  }
-
-  if (!ensure_topic_limits(selection, error)) {
-    response->success = false;
-    response->message = error;
-    last_error_ = error;
-    last_error_stamp_ = now();
-    return;
-  }
-
-  if (apply_now) {
     phase_ = ControllerPhase::BUSY;
-    if (!apply_selection(selection, error)) {
+    if (!apply_selection(topics, error)) {
       phase_ = ControllerPhase::ERROR;
       response->success = false;
       response->message = error;
@@ -489,104 +394,284 @@ void DispatcherControllerNode::handle_reload_selection(
       last_error_stamp_ = now();
       return;
     }
-    phase_ = ControllerPhase::IDLE;
-  }
 
-  response->success = true;
-  response->message = apply_now ? "Selection reloaded and applied" : "Selection reloaded";
+    last_gui_selection_.topics = topics;
+    last_gui_selection_.sink_topics = applied_selection_.sink_topics;
+    last_gui_selection_.timestamp = now();
+    phase_ = ControllerPhase::IDLE;
+    response->success = true;
+    response->message = "Selection applied";
+  } catch (const std::exception & ex) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = std::string("ApplySelection failed: ") + ex.what();
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = "ApplySelection failed: unknown exception";
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  }
+}
+
+void DispatcherControllerNode::handle_reload_selection(
+  const dispatcher_controller::srv::ReloadSelection::Request::SharedPtr request,
+  dispatcher_controller::srv::ReloadSelection::Response::SharedPtr response)
+{
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (phase_ == ControllerPhase::BUSY) {
+      response->success = false;
+      response->message = "Controller busy";
+      return;
+    }
+
+    std::vector<TopicSelection> selection;
+    std::string error;
+    bool apply_now = request->apply_now;
+    TopicToolsPlan plan;
+
+    if (selection_mode_ == SelectionMode::FILE) {
+      std::string path = request->selection_file_path.empty() ? selection_file_path_ :
+        request->selection_file_path;
+      if (!load_file_selection(path, selection, error)) {
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      if (!infer_missing_types(selection, error)) {
+        response->success = false;
+        response->message = "Failed to infer types: " + error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      if (!build_topic_tools_plan(selection, plan, error)) {
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      last_file_selection_.topics = selection;
+      last_file_selection_.sink_topics = plan.sink_topics;
+      last_file_selection_.timestamp = now();
+    } else if (selection_mode_ == SelectionMode::ALL) {
+      if (!discover_all_topics(selection, error)) {
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      if (!build_topic_tools_plan(selection, plan, error)) {
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      last_all_selection_.topics = selection;
+      last_all_selection_.sink_topics = plan.sink_topics;
+      last_all_selection_.timestamp = now();
+    } else {  // GUI mode
+      if (last_gui_selection_.topics.empty()) {
+        response->success = false;
+        response->message = "No cached GUI selection to reload";
+        return;
+      }
+      selection = last_gui_selection_.topics;
+      plan.sink_topics = last_gui_selection_.sink_topics;
+      if (request->selection_file_path.size() > 0) {
+        RCLCPP_WARN(get_logger(), "selection_file_path ignored in gui mode reload");
+      }
+    }
+
+    if (plan.sink_topics.empty() && !selection.empty()) {
+      if (!build_topic_tools_plan(selection, plan, error)) {
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+    }
+
+    if (!ensure_topic_limits(selection, error)) {
+      response->success = false;
+      response->message = error;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      return;
+    }
+
+    if (apply_now) {
+      phase_ = ControllerPhase::BUSY;
+      if (!apply_selection(selection, error)) {
+        phase_ = ControllerPhase::ERROR;
+        response->success = false;
+        response->message = error;
+        last_error_ = error;
+        last_error_stamp_ = now();
+        return;
+      }
+      phase_ = ControllerPhase::IDLE;
+    }
+
+    response->success = true;
+    response->message = apply_now ? "Selection reloaded and applied" : "Selection reloaded";
+  } catch (const std::exception & ex) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = std::string("ReloadSelection failed: ") + ex.what();
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    phase_ = ControllerPhase::ERROR;
+    last_error_ = "ReloadSelection failed: unknown exception";
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  }
 }
 
 void DispatcherControllerNode::handle_stop_streaming(
   const dispatcher_controller::srv::StopStreaming::Request::SharedPtr request,
   dispatcher_controller::srv::StopStreaming::Response::SharedPtr response)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (phase_ == ControllerPhase::BUSY) {
-    response->success = false;
-    response->message = "Controller busy";
-    return;
-  }
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (phase_ == ControllerPhase::BUSY) {
+      response->success = false;
+      response->message = "Controller busy";
+      return;
+    }
 
-  std::string error;
-  if (!deactivate_sink(
-      "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_, error))
-  {
+    std::string error;
+    if (!deactivate_sink(
+        "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_, error))
+    {
+      phase_ = ControllerPhase::ERROR;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      response->success = false;
+      response->message = error;
+      return;
+    }
+    if (!deactivate_sink(
+        "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
+        mosquitto_get_state_client_, error))
+    {
+      phase_ = ControllerPhase::ERROR;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      response->success = false;
+      response->message = error;
+      return;
+    }
+
+    if (!clear_active_topic_tools(error)) {
+      phase_ = ControllerPhase::ERROR;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      response->success = false;
+      response->message = error;
+      return;
+    }
+
+    if (request->reset_cached) {
+      last_gui_selection_ = SelectionSnapshot{};
+      last_file_selection_ = SelectionSnapshot{};
+      last_all_selection_ = SelectionSnapshot{};
+    }
+
+    applied_selection_ = SelectionSnapshot{};
+    phase_ = ControllerPhase::IDLE;
+    response->success = true;
+    response->message = "Streaming stopped";
+  } catch (const std::exception & ex) {
+    std::lock_guard<std::mutex> lock(mutex_);
     phase_ = ControllerPhase::ERROR;
-    last_error_ = error;
+    last_error_ = std::string("StopStreaming failed: ") + ex.what();
     last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
     response->success = false;
-    response->message = error;
-    return;
-  }
-  if (!deactivate_sink(
-      "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
-      mosquitto_get_state_client_, error))
-  {
+    response->message = last_error_;
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
     phase_ = ControllerPhase::ERROR;
-    last_error_ = error;
+    last_error_ = "StopStreaming failed: unknown exception";
     last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
     response->success = false;
-    response->message = error;
-    return;
+    response->message = last_error_;
   }
-
-  if (!clear_active_topic_tools(error)) {
-    phase_ = ControllerPhase::ERROR;
-    last_error_ = error;
-    last_error_stamp_ = now();
-    response->success = false;
-    response->message = error;
-    return;
-  }
-
-  if (request->reset_cached) {
-    last_gui_selection_ = SelectionSnapshot{};
-    last_file_selection_ = SelectionSnapshot{};
-    last_all_selection_ = SelectionSnapshot{};
-  }
-
-  applied_selection_ = SelectionSnapshot{};
-  phase_ = ControllerPhase::IDLE;
-  response->success = true;
-  response->message = "Streaming stopped";
 }
 
 void DispatcherControllerNode::handle_get_status(
   const dispatcher_controller::srv::GetStatus::Request::SharedPtr /*request*/,
   dispatcher_controller::srv::GetStatus::Response::SharedPtr response)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  response->selection_mode = mode_to_string(selection_mode_);
-  auto kafka_state = get_kafka_sink_state();
-  response->kafka_sink_state = kafka_state ? (state_string(*kafka_state)) : "unknown";
-  std::optional<uint8_t> mosquitto_state;
-  if (!mosquitto_sink_node_name_.empty()) {
-    mosquitto_state = get_sink_state("mosquitto_sink", mosquitto_get_state_client_);
-    response->mosquitto_sink_state =
-      mosquitto_state ? (state_string(*mosquitto_state)) : "unknown";
-  } else {
-    response->mosquitto_sink_state = "disabled";
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    response->selection_mode = mode_to_string(selection_mode_);
+    auto kafka_state = get_kafka_sink_state();
+    response->kafka_sink_state = kafka_state ? (state_string(*kafka_state)) : "unknown";
+    std::optional<uint8_t> mosquitto_state;
+    if (!mosquitto_sink_node_name_.empty()) {
+      mosquitto_state = get_sink_state("mosquitto_sink", mosquitto_get_state_client_);
+      response->mosquitto_sink_state =
+        mosquitto_state ? (state_string(*mosquitto_state)) : "unknown";
+    } else {
+      response->mosquitto_sink_state = "disabled";
+    }
+    bool streaming_active = false;
+    if (!kafka_sink_node_name_.empty()) {
+      streaming_active = streaming_active || (kafka_state &&
+        *kafka_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+    }
+    if (!mosquitto_sink_node_name_.empty()) {
+      streaming_active = streaming_active || (mosquitto_state &&
+        *mosquitto_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+    }
+    response->streaming_active = streaming_active;
+    response->applied_topics = applied_selection_.sink_topics.empty() ?
+      to_topic_info(applied_selection_.topics) : applied_selection_.sink_topics;
+    response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
+    response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
+    response->all_selection_count = static_cast<uint32_t>(last_all_selection_.topics.size());
+    response->last_error = last_error_;
+    response->last_error_stamp = last_error_stamp_;
+    response->reconciling = phase_ == ControllerPhase::BUSY;
+    response->success = true;
+    response->message = "OK";
+  } catch (const std::exception & ex) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    last_error_ = std::string("GetStatus failed: ") + ex.what();
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    last_error_ = "GetStatus failed: unknown exception";
+    last_error_stamp_ = now();
+    RCLCPP_ERROR(get_logger(), "%s", last_error_.c_str());
+    response->success = false;
+    response->message = last_error_;
   }
-  bool streaming_active = false;
-  if (!kafka_sink_node_name_.empty()) {
-    streaming_active = streaming_active || (kafka_state &&
-      *kafka_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
-  }
-  if (!mosquitto_sink_node_name_.empty()) {
-    streaming_active = streaming_active || (mosquitto_state &&
-      *mosquitto_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
-  }
-  response->streaming_active = streaming_active;
-  response->applied_topics = applied_selection_.sink_topics.empty() ?
-    to_topic_info(applied_selection_.topics) : applied_selection_.sink_topics;
-  response->gui_selection_count = static_cast<uint32_t>(last_gui_selection_.topics.size());
-  response->file_selection_count = static_cast<uint32_t>(last_file_selection_.topics.size());
-  response->all_selection_count = static_cast<uint32_t>(last_all_selection_.topics.size());
-  response->last_error = last_error_;
-  response->last_error_stamp = last_error_stamp_;
-  response->reconciling = phase_ == ControllerPhase::BUSY;
-  response->success = true;
-  response->message = "OK";
 }
 
 bool DispatcherControllerNode::switch_mode(
@@ -694,6 +779,22 @@ bool DispatcherControllerNode::apply_selection(
     return false;
   }
 
+  bool topic_tools_reconciled = false;
+  auto fail_with_rollback = [&](const std::string & cause) {
+      if (!topic_tools_reconciled) {
+        error_out = cause;
+        return false;
+      }
+
+      std::string rollback_error;
+      if (rollback_failed_selection(rollback_error)) {
+        error_out = cause + " Rolled back partial selection state.";
+      } else {
+        error_out = cause + " Rollback also failed: " + rollback_error;
+      }
+      return false;
+    };
+
   if (*state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
     if (!change_kafka_sink_state(
         lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE, "deactivate", error_out))
@@ -718,22 +819,23 @@ bool DispatcherControllerNode::apply_selection(
   if (!reconcile_topic_tools(plan, error_out)) {
     return false;
   }
+  topic_tools_reconciled = true;
 
   if (!set_kafka_sink_subscriptions_yaml(plan.sink_topics, error_out)) {
-    return false;
+    return fail_with_rollback(error_out);
   }
 
   if (!change_kafka_sink_state(
       lifecycle_msgs::msg::Transition::TRANSITION_ACTIVATE, "activate", error_out))
   {
-    return false;
+    return fail_with_rollback(error_out);
   }
 
   if (!apply_selection_to_sink(
       "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
       mosquitto_get_state_client_, mosquitto_set_parameters_client_, plan.sink_topics, error_out))
   {
-    return false;
+    return fail_with_rollback(error_out);
   }
 
   applied_selection_.topics = validated_topics;
@@ -748,6 +850,44 @@ bool DispatcherControllerNode::apply_selection(
   }
 
   return true;
+}
+
+bool DispatcherControllerNode::rollback_failed_selection(std::string & error_out)
+{
+  std::vector<std::string> rollback_errors;
+  std::string step_error;
+
+  if (!deactivate_sink(
+      "kafka_sink", kafka_sink_node_name_, change_state_client_, get_state_client_, step_error))
+  {
+    rollback_errors.push_back("kafka_sink deactivate: " + step_error);
+  }
+
+  step_error.clear();
+  if (!deactivate_sink(
+      "mosquitto_sink", mosquitto_sink_node_name_, mosquitto_change_state_client_,
+      mosquitto_get_state_client_, step_error))
+  {
+    rollback_errors.push_back("mosquitto_sink deactivate: " + step_error);
+  }
+
+  step_error.clear();
+  if (!clear_active_topic_tools(step_error)) {
+    rollback_errors.push_back("topic_tools cleanup: " + step_error);
+  }
+
+  if (rollback_errors.empty()) {
+    return true;
+  }
+
+  error_out.clear();
+  for (size_t index = 0; index < rollback_errors.size(); ++index) {
+    if (index > 0U) {
+      error_out += "; ";
+    }
+    error_out += rollback_errors[index];
+  }
+  return false;
 }
 
 bool DispatcherControllerNode::apply_selection_to_sink(

@@ -171,10 +171,12 @@ mosquitto_sink:
 
 ## Docker Hub / GHCR publishing (CI/CD)
 
-The GitHub Actions workflow in `.github/workflows/` builds the image and publishes it:
+Validation runs in `.github/workflows/ci.yml`. Image publishing is handled by
+`.github/workflows/publish-images.yml`.
 
-- **Pull requests / pushes to `main`:** Build + smoke test only.
-- **Tags matching `v*.*.*`:** Publish to GHCR and Docker Hub.
+- **Pushes to `main`:** Publish the container image after a runtime smoke test.
+- **Tags matching `v*`:** Publish the release image after the same runtime smoke test.
+- **Manual trigger (`workflow_dispatch`):** Allowed only from `main` or version tags; other refs are rejected before publish.
 
 Required GitHub secrets:
 

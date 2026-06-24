@@ -1,0 +1,22 @@
+kafka_sink:
+  ros__parameters:
+    qos_depth: 10
+    subscriptions_yaml: ""
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "kafka_sink/metrics"
+    telemetry.enabled: false
+    telemetry.log_every_n: 1
+    kafka.bootstrap_servers: "localhost:9092"
+    kafka.client_id: "kafka_sink"
+    kafka.acks: "all"
+    kafka.topic_prefix: "ros2"
+    kafka.topic_mapping_mode: "prefix_ros_topic"
+    kafka.fixed_topic: "ros2.raw"
+    kafka.strict_startup: false
+    kafka.max_queue_messages: 1024
+    kafka.drop_when_full: true
+    kafka.linger_ms: 5
+    kafka.batch_size: 65536
+    kafka.payload_format: "json"
+    kafka.message_key: "smoke"
