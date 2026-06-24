@@ -124,6 +124,22 @@ rclcpp::Parameter parse_parameter_value(
 DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("dispatcher_controller", options)
 {
+  // Concurrency model (load-bearing — see below before "optimizing" mutex_):
+  //   * The five public services (apply/reload/stop/get_status/set_mode), the
+  //     startup_apply_timer_ and the on_set_parameters callback are all created
+  //     WITHOUT a callback group, so they share the node's DEFAULT
+  //     MutuallyExclusive group. Under the MultiThreadedExecutor (main.cpp /
+  //     component_container_mt) the executor runs at most one of them at a time
+  //     — they cannot race each other.
+  //   * Sink/introspection service *clients* use this Reentrant group so their
+  //     responses can be processed on a free executor thread while a handler is
+  //     blocked in future.wait_for(). That is what lets the synchronous service
+  //     calls inside the handlers make progress.
+  // Consequently mutex_ is defensive only: every reader/writer of phase_,
+  // applied_selection_ and last_*_selection_ already runs serialized in the
+  // default group. Do NOT move the handlers to a Reentrant group (to make
+  // get_status responsive during a long apply) without making mutex_ genuinely
+  // protect that shared state first.
   client_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   kafka_sink_node_name_ = declare_parameter<std::string>("kafka_sink_node_name", "/kafka_sink");

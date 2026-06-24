@@ -237,6 +237,9 @@ private:
 
   std::chrono::milliseconds service_timeout_{3000};
   rclcpp::TimerBase::SharedPtr startup_apply_timer_;
+  // Defensive only: all handlers/timer/param callbacks share the default
+  // MutuallyExclusive group and are already serialized by the executor. See the
+  // constructor's concurrency-model comment before relying on this for safety.
   std::mutex mutex_;
 };
 
