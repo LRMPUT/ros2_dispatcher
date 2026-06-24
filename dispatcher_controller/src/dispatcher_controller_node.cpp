@@ -779,16 +779,20 @@ bool DispatcherControllerNode::apply_selection(
     return false;
   }
 
-  bool topic_tools_reconciled = false;
-  auto fail_with_rollback = [&](const std::string & cause) {
-      if (!topic_tools_reconciled) {
-        error_out = cause;
+  // Once any sink/topic_tools state has been successfully changed, every later
+  // failure must roll back to a clean stopped state — otherwise the system is
+  // left half-configured. Failures *before* the first mutation leave the
+  // previously-applied selection untouched, so they return without rollback.
+  bool mutated = false;
+  auto fail_with_rollback = [&](std::string cause) {
+      if (!mutated) {
+        error_out = std::move(cause);
         return false;
       }
 
       std::string rollback_error;
       if (rollback_failed_selection(rollback_error)) {
-        error_out = cause + " Rolled back partial selection state.";
+        error_out = cause + " Rolled back to a clean stopped state.";
       } else {
         error_out = cause + " Rollback also failed: " + rollback_error;
       }
@@ -799,12 +803,14 @@ bool DispatcherControllerNode::apply_selection(
     if (!change_kafka_sink_state(
         lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE, "deactivate", error_out))
     {
+      // Deactivate failed: kafka_sink is still in its prior state, nothing to undo.
       return false;
     }
+    mutated = true;
     state = get_kafka_sink_state();
     if (!state) {
       error_out = "Failed to confirm kafka_sink state after deactivate";
-      return false;
+      return fail_with_rollback(error_out);
     }
   }
 
@@ -812,14 +818,17 @@ bool DispatcherControllerNode::apply_selection(
     if (!change_kafka_sink_state(
         lifecycle_msgs::msg::Transition::TRANSITION_CONFIGURE, "configure", error_out))
     {
-      return false;
+      return fail_with_rollback(error_out);
     }
+    mutated = true;
   }
 
+  // reconcile_topic_tools may partially load components before failing, so from
+  // here on every failure path must clean up — mark mutated before calling it.
+  mutated = true;
   if (!reconcile_topic_tools(plan, error_out)) {
-    return false;
+    return fail_with_rollback(error_out);
   }
-  topic_tools_reconciled = true;
 
   if (!set_kafka_sink_subscriptions_yaml(plan.sink_topics, error_out)) {
     return fail_with_rollback(error_out);
@@ -875,6 +884,10 @@ bool DispatcherControllerNode::rollback_failed_selection(std::string & error_out
   if (!clear_active_topic_tools(step_error)) {
     rollback_errors.push_back("topic_tools cleanup: " + step_error);
   }
+
+  // The previously-applied selection is no longer streaming after a rollback;
+  // clear it so get_status does not report stale applied topics.
+  applied_selection_ = SelectionSnapshot{};
 
   if (rollback_errors.empty()) {
     return true;

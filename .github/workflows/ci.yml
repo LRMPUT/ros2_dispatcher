@@ -80,12 +80,16 @@ jobs:
 
       - name: Run colcon tests
         run: |
+          # Run functional gtest suites only (-L gtest). Linters (cpplint,
+          # uncrustify, flake8, pep257, ...) are a manual pre-PR step per
+          # CLAUDE.md and are not gated here. gui_client is omitted: it is an
+          # ament_python package with no gtest suite.
           docker run --rm ${{ steps.meta.outputs.image_name }}:builder \
             bash -lc "set -eo pipefail; \
                       source /opt/ros/${ROS_DISTRO}/setup.bash; \
                       source /ws/install/setup.bash; \
                       cd /ws; \
-                      colcon test --packages-select introspection_manager kafka_sink mosquitto_sink gui_client dispatcher_controller kafka_client; \
+                      colcon test --packages-select introspection_manager kafka_sink mosquitto_sink dispatcher_controller kafka_client --ctest-args -L gtest; \
                       colcon test-result --verbose"
 
       - name: Build runtime image (test)

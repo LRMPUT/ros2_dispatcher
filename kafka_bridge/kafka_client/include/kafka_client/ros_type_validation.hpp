@@ -43,7 +43,8 @@ inline bool is_valid_ros_type_name(const std::string & ros_type)
   }
 
   const std::string package_name = ros_type.substr(0U, first_slash);
-  const std::string interface_kind = ros_type.substr(first_slash + 1U, second_slash - first_slash - 1U);
+  const std::string interface_kind =
+    ros_type.substr(first_slash + 1U, second_slash - first_slash - 1U);
   const std::string type_name = ros_type.substr(second_slash + 1U);
 
   if (type_name.empty()) {
@@ -53,7 +54,12 @@ inline bool is_valid_ros_type_name(const std::string & ros_type)
     return false;
   }
 
+  // ROS package and interface names must start with a letter (not a digit or
+  // underscore) and otherwise contain only alphanumerics and underscores.
   auto valid_segment = [](const std::string & segment) {
+      if (segment.empty() || std::isalpha(static_cast<unsigned char>(segment.front())) == 0) {
+        return false;
+      }
       return std::all_of(segment.begin(), segment.end(), [](unsigned char ch) {
         return std::isalnum(static_cast<int>(ch)) || ch == '_';
       });

@@ -251,6 +251,10 @@ rcl_interfaces::msg::SetParametersResult KafkaSourceNode::on_parameters_set(
       kafka_parameters_.offset_reset = parameter.as_string();
     } else if (parameter.get_name() == "kafka.allowed_types") {
       kafka_parameters_.allowed_types = parameter.as_string_array();
+      // Drop cached type support so a tightened allowlist takes effect on the
+      // next message rather than serving previously-allowed types from cache.
+      std::lock_guard<std::mutex> lock(cache_mutex_);
+      type_support_cache_.clear();
     } else if (parameter.get_name() == "ros_topic_prefix") {
       ros_topic_prefix_ = parameter.as_string();
     } else if (parameter.get_name() == "qos_depth") {
@@ -355,6 +359,14 @@ bool KafkaSourceNode::validate_parameters(std::string * error_message) const
 
 bool KafkaSourceNode::start_consumer(std::string * error_message)
 {
+  if (kafka_parameters_.allowed_types.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "kafka.allowed_types is empty: every valid ROS type advertised by an "
+      "incoming Kafka 'ros_type' header will be loaded. Set kafka.allowed_types "
+      "to restrict which message types may be deserialized.");
+  }
+
   std::string errstr;
   std::unique_ptr<RdKafka::Conf> conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
   if (!conf) {
@@ -555,6 +567,17 @@ bool KafkaSourceNode::ensure_type_support(
   TypeSupportCacheEntry * entry,
   std::string * error_message)
 {
+  std::lock_guard<std::mutex> lock(cache_mutex_);
+  auto it = type_support_cache_.find(ros_type);
+  if (it != type_support_cache_.end()) {
+    // Cache hit implies the type already passed the allowlist gate when first
+    // loaded; the cache is cleared whenever kafka.allowed_types changes.
+    *entry = it->second;
+    return true;
+  }
+
+  // Gate the (untrusted, Kafka-header-derived) type against the allowlist
+  // before loading any type-support library.
   if (!kafka_client::is_allowed_ros_type_name(ros_type, kafka_parameters_.allowed_types)) {
     if (error_message) {
       if (kafka_client::is_valid_ros_type_name(ros_type)) {
@@ -564,13 +587,6 @@ bool KafkaSourceNode::ensure_type_support(
       }
     }
     return false;
-  }
-
-  std::lock_guard<std::mutex> lock(cache_mutex_);
-  auto it = type_support_cache_.find(ros_type);
-  if (it != type_support_cache_.end()) {
-    *entry = it->second;
-    return true;
   }
 
   try {

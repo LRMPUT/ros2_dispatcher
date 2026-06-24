@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "kafka_client/ros_type_validation.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
 #include "nlohmann/json.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -409,6 +410,11 @@ std::vector<SubscriptionConfig> parse_subscriptions_yaml(const std::string & yam
 
     if (topic_name.empty() || msg_type.empty()) {
       throw std::runtime_error("Subscription entries must have non-empty topic_name and msg_type.");
+    }
+
+    if (!kafka_client::is_valid_ros_type_name(msg_type)) {
+      throw std::runtime_error(
+        "Subscription msg_type is not a valid 'pkg/msg/Type' name: '" + msg_type + "'.");
     }
 
     if (kafka_name) {

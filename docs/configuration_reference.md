@@ -205,6 +205,20 @@ Same as `kafka_sink` (`metrics.enabled`, `metrics.interval_ms`, `metrics.topic`)
 | `kafka.group_id` | string | `ros2-kafka-source` | Consumer group ID. |
 | `kafka.topic_pattern` | string | `^ros2\\..*` | Regex pattern for Kafka topics to consume. |
 | `kafka.offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
+| `kafka.allowed_types` | string[] | `[]` | Allowlist of `pkg/msg/Type` names whose type-support libraries may be loaded from incoming `ros_type` headers. **Empty means allow every valid type** (no restriction); set it to restrict which message types may be deserialized from untrusted Kafka payloads. |
+
+---
+
+## kafka_cdr_to_json
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `kafka.bootstrap_servers` | string | `localhost:9092` | Broker address. |
+| `kafka.group_id` | string | `ros2-kafka-cdr-to-json` | Consumer group ID. |
+| `kafka.input_topic_pattern` | string | `^ros2\\..*` | Regex pattern for Kafka topics to consume. |
+| `kafka.output_topic_prefix` | string | `ros2_json` | Prefix for the republished JSON topics. |
+| `kafka.offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
+| `kafka.allowed_types` | string[] | `[]` | Allowlist of `pkg/msg/Type` names whose type-support libraries may be loaded from incoming `ros_type` headers. **Empty means allow every valid type** (no restriction); set it to restrict which message types may be deserialized from untrusted Kafka payloads. |
 
 ---
 
