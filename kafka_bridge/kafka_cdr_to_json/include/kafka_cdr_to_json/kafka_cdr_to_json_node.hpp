@@ -135,6 +135,9 @@ private:
   std::mutex cache_mutex_;
   std::unordered_map<std::string, TypeSupportCacheEntry> type_support_cache_;
   std::unordered_map<std::string, std::shared_ptr<TopicMetrics>> metrics_;
+  // Shared bucket for input topics beyond kMaxMetricsTopics; bounds the metrics
+  // map against untrusted input-topic flooding.
+  std::shared_ptr<TopicMetrics> overflow_metrics_;
 
   std::mutex log_mutex_;
   std::unordered_map<std::string, int64_t> error_log_next_ns_;

@@ -36,6 +36,11 @@ namespace kafka_source
 namespace
 {
 constexpr size_t kMaxLatencySamples = 1000;
+// Bounds the per-(topic,type) metrics map so a flood of distinct, attacker-
+// controlled ros_type header values cannot grow it without limit. Legitimate
+// deployments have far fewer (topic,type) pairs than this; once exceeded, new
+// pairs are metered under a single shared "overflow" bucket.
+constexpr size_t kMaxMetricsTopics = 1024;
 
 std::unordered_map<std::string, std::string> parse_topic_mappings(
   const std::string & mappings)
@@ -194,6 +199,13 @@ KafkaSourceNode::CallbackReturn KafkaSourceNode::on_deactivate(
   if (metrics_pub_) {
     metrics_pub_->on_deactivate();
   }
+  {
+    // The consumer thread is joined above, so release the loaded type-support
+    // libraries instead of carrying them (and their dlopen handles) across a
+    // deactivate. A re-activate reloads lazily, re-gated by the allowlist.
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    type_support_cache_.clear();
+  }
   return CallbackReturn::SUCCESS;
 }
 
@@ -240,6 +252,17 @@ rcl_interfaces::msg::SetParametersResult KafkaSourceNode::on_parameters_set(
     return result;
   }
 
+  // Snapshot the live config so that if validation rejects this set, no field
+  // (notably the security-relevant allowlist) is left mutated while the
+  // parameter server keeps the old value.
+  const auto saved_kafka_parameters = kafka_parameters_;
+  const auto saved_ros_topic_prefix = ros_topic_prefix_;
+  const auto saved_qos_depth = qos_depth_;
+  const auto saved_metrics_enabled = metrics_enabled_;
+  const auto saved_metrics_interval_ms = metrics_interval_ms_;
+  const auto saved_metrics_topic = metrics_topic_;
+  const auto saved_topic_mappings = topic_mappings_;
+
   for (const auto & parameter : parameters) {
     if (parameter.get_name() == "kafka.bootstrap_servers") {
       kafka_parameters_.bootstrap_servers = parameter.as_string();
@@ -272,6 +295,15 @@ rcl_interfaces::msg::SetParametersResult KafkaSourceNode::on_parameters_set(
 
   std::string error;
   if (!validate_parameters(&error)) {
+    // Roll back every in-memory field; the parameter server is not committing
+    // this set, so the live state must match the previously-accepted values.
+    kafka_parameters_ = saved_kafka_parameters;
+    ros_topic_prefix_ = saved_ros_topic_prefix;
+    qos_depth_ = saved_qos_depth;
+    metrics_enabled_ = saved_metrics_enabled;
+    metrics_interval_ms_ = saved_metrics_interval_ms;
+    metrics_topic_ = saved_metrics_topic;
+    topic_mappings_ = saved_topic_mappings;
     result.reason = error;
     result.successful = false;
     return result;
@@ -328,13 +360,12 @@ bool KafkaSourceNode::validate_parameters(std::string * error_message) const
     }
     return false;
   }
-  for (const auto & ros_type : kafka_parameters_.allowed_types) {
-    if (!kafka_client::is_valid_ros_type_name(ros_type)) {
-      if (error_message) {
-        *error_message = "kafka.allowed_types contains invalid ROS type: " + ros_type;
-      }
-      return false;
+  std::string invalid_type;
+  if (!kafka_client::all_valid_ros_type_names(kafka_parameters_.allowed_types, &invalid_type)) {
+    if (error_message) {
+      *error_message = "kafka.allowed_types contains invalid ROS type: " + invalid_type;
     }
+    return false;
   }
   if (qos_depth_ <= 0) {
     if (error_message) {
@@ -489,13 +520,23 @@ void KafkaSourceNode::process_message(RdKafka::Message * message)
     std::lock_guard<std::mutex> lock(cache_mutex_);
     auto key = ros_topic + "|" + ros_type;
     auto it = metrics_.find(key);
-    if (it == metrics_.end()) {
+    if (it != metrics_.end()) {
+      metrics = it->second;
+    } else if (metrics_.size() >= kMaxMetricsTopics) {
+      // Map is full — meter under a shared overflow bucket instead of allocating
+      // an unbounded number of per-type entries for untrusted ros_type values.
+      if (!overflow_metrics_) {
+        overflow_metrics_ = std::make_shared<TopicMetrics>();
+        overflow_metrics_->ros_topic = "(overflow)";
+        overflow_metrics_->ros_type = "(overflow)";
+      }
+      metrics = overflow_metrics_;
+    } else {
       auto entry = std::make_shared<TopicMetrics>();
       entry->ros_topic = ros_topic;
       entry->ros_type = ros_type;
-      it = metrics_.emplace(key, entry).first;
+      metrics = metrics_.emplace(key, entry).first->second;
     }
-    metrics = it->second;
   }
 
   metrics->received.fetch_add(1, std::memory_order_relaxed);

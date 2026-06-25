@@ -39,6 +39,10 @@ namespace kafka_cdr_to_json
 namespace
 {
 constexpr size_t kMaxLatencySamples = 1000;
+// Bounds the per-input-topic metrics map so a flood of distinct, attacker-
+// controlled Kafka input topics cannot grow it without limit. Once exceeded,
+// new topics are metered under a single shared "overflow" bucket.
+constexpr size_t kMaxMetricsTopics = 1024;
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;
 
 std::unordered_map<std::string, std::string> parse_topic_mappings(
@@ -406,6 +410,13 @@ KafkaCdrToJsonNode::CallbackReturn KafkaCdrToJsonNode::on_deactivate(
   if (metrics_pub_) {
     metrics_pub_->on_deactivate();
   }
+  {
+    // The consumer thread is joined above, so release the loaded type-support
+    // libraries instead of carrying them (and their dlopen handles) across a
+    // deactivate. A re-activate reloads lazily, re-gated by the allowlist.
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    type_support_cache_.clear();
+  }
   return CallbackReturn::SUCCESS;
 }
 
@@ -453,6 +464,16 @@ rcl_interfaces::msg::SetParametersResult KafkaCdrToJsonNode::on_parameters_set(
     return result;
   }
 
+  // Snapshot the live config so that if validation rejects this set, no field
+  // (notably the security-relevant allowlist) is left mutated while the
+  // parameter server keeps the old value.
+  const auto saved_kafka_parameters = kafka_parameters_;
+  const auto saved_json_parameters = json_parameters_;
+  const auto saved_metrics_enabled = metrics_enabled_;
+  const auto saved_metrics_interval_ms = metrics_interval_ms_;
+  const auto saved_metrics_topic = metrics_topic_;
+  const auto saved_topic_mappings = topic_mappings_;
+
   for (const auto & parameter : parameters) {
     if (parameter.get_name() == "kafka.bootstrap_servers") {
       kafka_parameters_.bootstrap_servers = parameter.as_string();
@@ -487,6 +508,14 @@ rcl_interfaces::msg::SetParametersResult KafkaCdrToJsonNode::on_parameters_set(
 
   std::string error;
   if (!validate_parameters(&error)) {
+    // Roll back every in-memory field; the parameter server is not committing
+    // this set, so the live state must match the previously-accepted values.
+    kafka_parameters_ = saved_kafka_parameters;
+    json_parameters_ = saved_json_parameters;
+    metrics_enabled_ = saved_metrics_enabled;
+    metrics_interval_ms_ = saved_metrics_interval_ms;
+    metrics_topic_ = saved_metrics_topic;
+    topic_mappings_ = saved_topic_mappings;
     result.reason = error;
     result.successful = false;
     return result;
@@ -544,13 +573,12 @@ bool KafkaCdrToJsonNode::validate_parameters(std::string * error_message) const
     }
     return false;
   }
-  for (const auto & ros_type : kafka_parameters_.allowed_types) {
-    if (!kafka_client::is_valid_ros_type_name(ros_type)) {
-      if (error_message) {
-        *error_message = "kafka.allowed_types contains invalid ROS type: " + ros_type;
-      }
-      return false;
+  std::string invalid_type;
+  if (!kafka_client::all_valid_ros_type_names(kafka_parameters_.allowed_types, &invalid_type)) {
+    if (error_message) {
+      *error_message = "kafka.allowed_types contains invalid ROS type: " + invalid_type;
     }
+    return false;
   }
   if (metrics_interval_ms_ <= 0) {
     if (error_message) {
@@ -717,17 +745,25 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
   {
     std::lock_guard<std::mutex> lock(cache_mutex_);
     auto it = metrics_.find(input_topic);
-    if (it == metrics_.end()) {
+    if (it != metrics_.end()) {
+      it->second->output_topic = output_topic;
+      it->second->ros_type = resolved_ros_type;
+      metrics = it->second;
+    } else if (metrics_.size() >= kMaxMetricsTopics) {
+      // Map is full — meter under a shared overflow bucket instead of allocating
+      // an unbounded number of per-topic entries for untrusted input topics.
+      if (!overflow_metrics_) {
+        overflow_metrics_ = std::make_shared<TopicMetrics>();
+        overflow_metrics_->input_topic = "(overflow)";
+      }
+      metrics = overflow_metrics_;
+    } else {
       auto entry = std::make_shared<TopicMetrics>();
       entry->input_topic = input_topic;
       entry->output_topic = output_topic;
       entry->ros_type = resolved_ros_type;
-      it = metrics_.emplace(input_topic, entry).first;
-    } else {
-      it->second->output_topic = output_topic;
-      it->second->ros_type = resolved_ros_type;
+      metrics = metrics_.emplace(input_topic, entry).first->second;
     }
-    metrics = it->second;
   }
 
   metrics->received.fetch_add(1, std::memory_order_relaxed);

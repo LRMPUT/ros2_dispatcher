@@ -37,10 +37,16 @@ if ! grep -q "^/dispatcher_controller/get_status$" <<<"${STATUS:-}"; then
   exit 1
 fi
 
+# get_status appears at controller construction, before the startup timer has
+# configured/activated kafka_sink and created its subscription on /demo/number.
+# Publish with -w 1 (wait for one matching subscription) instead of --once so the
+# message cannot race DDS discovery and get dropped; bound the wait with timeout
+# so a sink that never activates fails loudly instead of hanging.
 docker compose exec -T dispatcher bash -lc \
   "source /opt/ros/${ROS_DISTRO}/setup.bash && \
    source /ws/install/setup.bash && \
-   ros2 topic pub --once /demo/number std_msgs/msg/Int32 '{data: 42}'"
+   timeout 30 ros2 topic pub -w 1 --times 5 --rate 2 \
+     /demo/number std_msgs/msg/Int32 '{data: 42}'"
 
 CONSUMED="$(
   docker compose exec -T broker bash -lc \

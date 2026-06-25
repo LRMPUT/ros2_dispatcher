@@ -57,3 +57,30 @@ TEST(RosTypeValidationTest, EnforcesAllowlistWhenPresent)
   EXPECT_FALSE(kafka_client::is_allowed_ros_type_name("std_msgs/msg/Bool", allowed_types));
   EXPECT_FALSE(kafka_client::is_allowed_ros_type_name("bad-type", allowed_types));
 }
+
+TEST(RosTypeValidationTest, EmptyAllowlistAllowsAnyValidType)
+{
+  const std::vector<std::string> empty;
+  EXPECT_TRUE(kafka_client::is_allowed_ros_type_name("std_msgs/msg/String", empty));
+  // ...but an invalid name is still rejected even with an empty allowlist.
+  EXPECT_FALSE(kafka_client::is_allowed_ros_type_name("0bad/msg/X", empty));
+  EXPECT_FALSE(kafka_client::is_allowed_ros_type_name("../etc/msg/Passwd", empty));
+}
+
+TEST(RosTypeValidationTest, AllValidRosTypeNamesReportsFirstInvalid)
+{
+  std::string invalid;
+  EXPECT_TRUE(
+    kafka_client::all_valid_ros_type_names(
+      {"std_msgs/msg/String", "nav_msgs/msg/Odometry"}, &invalid));
+  EXPECT_TRUE(invalid.empty());
+
+  EXPECT_FALSE(
+    kafka_client::all_valid_ros_type_names(
+      {"std_msgs/msg/String", "0bad/msg/X", "also/bad"}, &invalid));
+  EXPECT_EQ(invalid, "0bad/msg/X");
+
+  // Tolerates a null out-parameter.
+  EXPECT_FALSE(kafka_client::all_valid_ros_type_names({"bad-type"}, nullptr));
+  EXPECT_TRUE(kafka_client::all_valid_ros_type_names({}, nullptr));
+}

@@ -128,6 +128,9 @@ private:
   std::unordered_map<std::string, TypeSupportCacheEntry> type_support_cache_;
   std::unordered_map<std::string, rclcpp::GenericPublisher::SharedPtr> publishers_;
   std::unordered_map<std::string, std::shared_ptr<TopicMetrics>> metrics_;
+  // Shared bucket for (topic,type) pairs beyond kMaxMetricsTopics; bounds the
+  // metrics map against untrusted ros_type flooding.
+  std::shared_ptr<TopicMetrics> overflow_metrics_;
 
   std::atomic<int64_t> next_error_log_time_ns_{0};
 

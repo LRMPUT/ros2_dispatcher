@@ -60,9 +60,10 @@ inline bool is_valid_ros_type_name(const std::string & ros_type)
       if (segment.empty() || std::isalpha(static_cast<unsigned char>(segment.front())) == 0) {
         return false;
       }
-      return std::all_of(segment.begin(), segment.end(), [](unsigned char ch) {
-        return std::isalnum(static_cast<int>(ch)) || ch == '_';
-      });
+      return std::all_of(
+        segment.begin(), segment.end(), [](unsigned char ch) {
+          return std::isalnum(static_cast<int>(ch)) || ch == '_';
+        });
     };
 
   return valid_segment(package_name) && valid_segment(type_name);
@@ -79,6 +80,24 @@ inline bool is_allowed_ros_type_name(
     return true;
   }
   return std::find(allowed_types.begin(), allowed_types.end(), ros_type) != allowed_types.end();
+}
+
+// Validate every entry of an allowlist. On failure, sets *invalid (when non-null)
+// to the first offending entry and returns false. Shared by the consumer nodes
+// so the allowlist-validation rule lives in exactly one place.
+inline bool all_valid_ros_type_names(
+  const std::vector<std::string> & types,
+  std::string * invalid = nullptr)
+{
+  for (const auto & type_name : types) {
+    if (!is_valid_ros_type_name(type_name)) {
+      if (invalid != nullptr) {
+        *invalid = type_name;
+      }
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace kafka_client

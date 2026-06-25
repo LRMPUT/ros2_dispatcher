@@ -756,8 +756,22 @@ bool DispatcherControllerNode::switch_mode(
     }
 
     phase_ = ControllerPhase::BUSY;
-    if (!apply_selection(selection, error_out)) {
+    // apply_selection can throw (YAML, bad_alloc, ...). switch_mode is reached
+    // from the startup timer and the parameter callback, which have no try/catch,
+    // so on any exception reset phase_ (otherwise it stays BUSY forever and every
+    // later apply/reload/stop is rejected) and report a clean failure.
+    try {
+      if (!apply_selection(selection, error_out)) {
+        phase_ = ControllerPhase::ERROR;
+        return false;
+      }
+    } catch (const std::exception & ex) {
       phase_ = ControllerPhase::ERROR;
+      error_out = std::string("apply_selection failed: ") + ex.what();
+      return false;
+    } catch (...) {
+      phase_ = ControllerPhase::ERROR;
+      error_out = "apply_selection failed: unknown exception";
       return false;
     }
     phase_ = ControllerPhase::IDLE;
@@ -800,6 +814,9 @@ bool DispatcherControllerNode::apply_selection(
   // left half-configured. Failures *before* the first mutation leave the
   // previously-applied selection untouched, so they return without rollback.
   bool mutated = false;
+  // `cause` is taken BY VALUE intentionally: callers pass `error_out` itself, and
+  // the body reassigns `error_out` (= cause + ...) / moves from `cause`. A copy
+  // breaks that aliasing; do not change this to `const std::string &`.
   auto fail_with_rollback = [&](std::string cause) {
       if (!mutated) {
         error_out = std::move(cause);
@@ -836,11 +853,11 @@ bool DispatcherControllerNode::apply_selection(
     {
       return fail_with_rollback(error_out);
     }
-    mutated = true;
   }
 
-  // reconcile_topic_tools may partially load components before failing, so from
-  // here on every failure path must clean up — mark mutated before calling it.
+  // reconcile_topic_tools may partially load components before failing, and
+  // configure (above) may already have changed sink state, so from here on every
+  // failure path must clean up — mark mutated before calling it.
   mutated = true;
   if (!reconcile_topic_tools(plan, error_out)) {
     return fail_with_rollback(error_out);
@@ -901,11 +918,12 @@ bool DispatcherControllerNode::rollback_failed_selection(std::string & error_out
     rollback_errors.push_back("topic_tools cleanup: " + step_error);
   }
 
-  // The previously-applied selection is no longer streaming after a rollback;
-  // clear it so get_status does not report stale applied topics.
-  applied_selection_ = SelectionSnapshot{};
-
   if (rollback_errors.empty()) {
+    // Rollback fully succeeded: the sinks are stopped, so clear the recorded
+    // selection. If any step failed we deliberately leave applied_selection_
+    // intact, because a sink may still be ACTIVE/streaming and get_status must
+    // not report an empty selection while data is flowing.
+    applied_selection_ = SelectionSnapshot{};
     return true;
   }
 
