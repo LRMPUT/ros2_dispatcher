@@ -190,6 +190,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
       std::make_unique<zenoh::Session>(zenoh::Session::open(std::move(config)));
 
     auto on_liveliness = [this](const zenoh::Sample & s) {
+        if (!is_active_.load(std::memory_order_acquire)) {return;}
         std::string key{s.get_keyexpr().as_string_view()};
         std::string robot = key.substr(key.rfind('/') + 1);
         std::lock_guard<std::mutex> lk(state_mutex_);
