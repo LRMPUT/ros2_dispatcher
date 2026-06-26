@@ -225,6 +225,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         zenoh::closures::none));
 
     auto on_geofence = [this](const zenoh::Query & q) {
+        if (!is_active_.load(std::memory_order_acquire)) {return;}
         // Parse selector params: reconstruct "key?params" for parse_selector_params.
         const auto params_sv = q.get_parameters();
         const std::string full_selector =
@@ -257,6 +258,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         }
 
         // Build reply JSON (no lock held).
+        // fidelity_horizon_ms_ set in on_configure; immutable after activation, no lock needed.
         const auto qod = compute_qod(
           contributed, expected, max_stale,
           static_cast<int64_t>(fidelity_horizon_ms_) * 1'000'000LL);

@@ -56,7 +56,7 @@ private:
   };
 
   // PIMPL holding session + subscribers. Members are destroyed in reverse
-  // declaration order, so session outlives both subscribers.
+  // declaration order, so session outlives subscribers and queryable.
   struct ZenohRuntime;
 
   bool start_session(std::string * error_message);
