@@ -63,6 +63,7 @@ struct ZenohGisQueryNode::ZenohRuntime
   std::optional<zenoh::Subscriber<void>> liveliness_sub;
   std::optional<zenoh::Subscriber<void>> position_sub;
   std::optional<zenoh::Queryable<void>> geofence_q;
+  std::optional<zenoh::Queryable<void>> collision_q;
 };
 
 ZenohGisQueryNode::ZenohGisQueryNode(const rclcpp::NodeOptions & options)
@@ -278,6 +279,77 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
       runtime->session->declare_queryable(
         zenoh::KeyExpr("gis/query/geofence"),
         std::move(on_geofence),
+        zenoh::closures::none));
+
+    auto on_collision = [this](const zenoh::Query & q) {
+        if (!is_active_.load(std::memory_order_acquire)) {return;}
+        // Parse selector params: read radius (default 2.0 m).
+        const auto params_sv = q.get_parameters();
+        const std::string full_selector =
+          std::string{q.get_keyexpr().as_string_view()} +
+        (params_sv.empty() ? "" : "?" + std::string{params_sv});
+        const auto params = parse_selector_params(full_selector);
+        double radius = 2.0;
+        if (params.count("radius")) {
+          try {
+            radius = std::stod(params.at("radius"));
+          } catch (...) {
+            radius = 2.0;
+          }
+        }
+
+        // Snapshot state under lock; release before calling reply.
+        nlohmann::json pairs = nlohmann::json::array();
+        uint64_t contributed = 0, expected = 0;
+        int64_t max_stale = 0;
+        const int64_t now = this->get_clock()->now().nanoseconds();
+        {
+          std::lock_guard<std::mutex> lk(state_mutex_);
+          expected = live_robots_.size();
+          // Collect robots that have a known position and track staleness.
+          std::vector<std::string> robots_with_pos;
+          for (const auto & robot : live_robots_) {
+            auto it = latest_.find(robot);
+            if (it == latest_.end()) {continue;}
+            contributed++;
+            max_stale = std::max(max_stale, now - it->second.stamp_ns);
+            robots_with_pos.push_back(robot);
+          }
+          // Iterate over all unordered pairs (a, b) with a < b by index.
+          for (size_t i = 0; i < robots_with_pos.size(); ++i) {
+            for (size_t j = i + 1; j < robots_with_pos.size(); ++j) {
+              const auto & ra = robots_with_pos[i];
+              const auto & rb = robots_with_pos[j];
+              const auto & fix_a = latest_.at(ra);
+              const auto & fix_b = latest_.at(rb);
+              const double dist =
+                haversine_m({fix_a.lat, fix_a.lon}, {fix_b.lat, fix_b.lon});
+              if (dist < radius) {
+                pairs.push_back(nlohmann::json::array({ra, rb, dist}));
+              }
+            }
+          }
+        }
+
+        // Build reply JSON (no lock held).
+        // fidelity_horizon_ms_ is immutable after activation; no lock needed.
+        const auto qod = compute_qod(
+          contributed, expected, max_stale,
+          static_cast<int64_t>(fidelity_horizon_ms_) * 1'000'000LL);
+        const nlohmann::json reply_json = {
+          {"radius", radius},
+          {"pairs", pairs},
+          {"qod", {{"completeness", qod.completeness}, {"fidelity", qod.fidelity}}}
+        };
+        zenoh::Query::ReplyOptions ro;
+        ro.attachment = zenoh::Bytes(reply_json["qod"].dump());
+        q.reply(q.get_keyexpr(), zenoh::Bytes(reply_json.dump()), std::move(ro));
+      };
+
+    runtime->collision_q.emplace(
+      runtime->session->declare_queryable(
+        zenoh::KeyExpr("gis/query/collision"),
+        std::move(on_collision),
         zenoh::closures::none));
   } catch (const zenoh::ZException & ex) {
     if (error_message) {
