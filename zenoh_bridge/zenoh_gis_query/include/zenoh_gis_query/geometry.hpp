@@ -15,6 +15,7 @@
 #ifndef ZENOH_GIS_QUERY__GEOMETRY_HPP_
 #define ZENOH_GIS_QUERY__GEOMETRY_HPP_
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
