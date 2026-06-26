@@ -145,6 +145,7 @@ ZenohGisQueryNode::CallbackReturn ZenohGisQueryNode::on_deactivate(
     std::lock_guard<std::mutex> lk(state_mutex_);
     live_robots_.clear();
     latest_.clear();
+    inside_state_.clear();
   }
   RCLCPP_INFO(get_logger(), "Deactivated zenoh_gis_query");
   return CallbackReturn::SUCCESS;
@@ -159,6 +160,7 @@ ZenohGisQueryNode::CallbackReturn ZenohGisQueryNode::on_cleanup(
     std::lock_guard<std::mutex> lk(state_mutex_);
     live_robots_.clear();
     latest_.clear();
+    inside_state_.clear();
   }
   plots_.clear();
   sensors_.clear();
@@ -299,8 +301,62 @@ void ZenohGisQueryNode::on_position_sample(
 {
   auto fix = decode_navsatfix(payload);
   if (!fix.valid) {return;}
-  std::lock_guard<std::mutex> lk(state_mutex_);
-  latest_[robot_from_key(key)] = fix;
+  const std::string robot = robot_from_key(key);
+
+  // Crossing event: plot id + "enter" or "exit".
+  struct CrossingEvent
+  {
+    std::string plot_id;
+    std::string event;
+  };
+  std::vector<CrossingEvent> events;
+
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    latest_[robot] = fix;
+
+    // Compute new inside-set for this robot across all plots.
+    std::set<std::string> new_inside;
+    for (const auto & plot : plots_) {
+      if (point_in_polygon({fix.lat, fix.lon}, plot.ring)) {
+        new_inside.insert(plot.id);
+      }
+    }
+
+    // Diff against previous inside-set to produce enter/exit events.
+    auto & prev_inside = inside_state_[robot];
+    for (const auto & pid : new_inside) {
+      if (prev_inside.find(pid) == prev_inside.end()) {
+        events.push_back({pid, "enter"});
+      }
+    }
+    for (const auto & pid : prev_inside) {
+      if (new_inside.find(pid) == new_inside.end()) {
+        events.push_back({pid, "exit"});
+      }
+    }
+    prev_inside = std::move(new_inside);
+  }
+
+  // Publish crossing events outside the lock (do not hold state_mutex_ across put).
+  if (!events.empty() && rt_ && rt_->session) {
+    const std::string alert_key = "gis/alert/geofence/" + robot;
+    for (const auto & ev : events) {
+      const nlohmann::json alert = {
+        {"robot", robot},
+        {"plot", ev.plot_id},
+        {"event", ev.event},
+        {"stamp_ns", fix.stamp_ns}
+      };
+      try {
+        rt_->session->put(
+          zenoh::KeyExpr(alert_key),
+          zenoh::Bytes(alert.dump()));
+      } catch (const zenoh::ZException & ex) {
+        RCLCPP_WARN(get_logger(), "Geofence alert publish failed: %s", ex.what());
+      }
+    }
+  }
 }
 
 // static

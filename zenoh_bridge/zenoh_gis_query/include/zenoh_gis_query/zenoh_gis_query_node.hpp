@@ -77,10 +77,12 @@ private:
   std::vector<Plot> plots_;
   std::vector<Sensor> sensors_;
 
-  // Guards live_robots_ and latest_; callbacks run on Zenoh threads.
+  // Guards live_robots_, latest_, and inside_state_; callbacks run on Zenoh threads.
   std::mutex state_mutex_;
   std::set<std::string> live_robots_;
   std::unordered_map<std::string, FixSample> latest_;
+  // Per-robot set of plot ids the robot is currently inside (geofence state).
+  std::unordered_map<std::string, std::set<std::string>> inside_state_;
 
   std::atomic_bool is_active_{false};
 
