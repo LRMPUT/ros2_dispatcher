@@ -41,6 +41,7 @@ services:
       - selection_file_path:=/ws/install/share/ros2_kafka_dispatcher_bringup/config/selection_smoke.yaml
       - kafka_sink_param_file:=/ws/install/share/ros2_kafka_dispatcher_bringup/config/kafka_sink_smoke.yaml
       - enable_mosquitto_sink:=false
+      - enable_zenoh_sink:=false
       - controller_log_level:=info
       - kafka_sink_log_level:=info
       - introspection_manager_log_level:=INFO

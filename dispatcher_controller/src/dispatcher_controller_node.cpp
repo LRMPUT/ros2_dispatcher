@@ -145,6 +145,8 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
   kafka_sink_node_name_ = declare_parameter<std::string>("kafka_sink_node_name", "/kafka_sink");
   mosquitto_sink_node_name_ =
     declare_parameter<std::string>("mosquitto_sink_node_name", "/mosquitto_sink");
+  zenoh_sink_node_name_ =
+    declare_parameter<std::string>("zenoh_sink_node_name", "/zenoh_sink");
   introspection_service_name_ = declare_parameter<std::string>(
     "introspection_service_name", "/introspection_manager/get_topics");
   introspection_node_name_ =
@@ -189,6 +191,17 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
       mosquitto_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default,
       client_cb_group_);
   }
+  if (!zenoh_sink_node_name_.empty()) {
+    zenoh_change_state_client_ = create_client<lifecycle_msgs::srv::ChangeState>(
+      zenoh_sink_node_name_ + "/change_state", rmw_qos_profile_services_default,
+      client_cb_group_);
+    zenoh_get_state_client_ = create_client<lifecycle_msgs::srv::GetState>(
+      zenoh_sink_node_name_ + "/get_state", rmw_qos_profile_services_default,
+      client_cb_group_);
+    zenoh_set_parameters_client_ = create_client<rcl_interfaces::srv::SetParameters>(
+      zenoh_sink_node_name_ + "/set_parameters", rmw_qos_profile_services_default,
+      client_cb_group_);
+  }
   introspection_client_ = create_client<introspection_manager_msgs::srv::GetTopics>(
     introspection_service_name_, rmw_qos_profile_services_default, client_cb_group_);
   introspection_param_client_ = create_client<rcl_interfaces::srv::SetParameters>(
@@ -228,9 +241,11 @@ DispatcherControllerNode::DispatcherControllerNode(const rclcpp::NodeOptions & o
     std::bind(&DispatcherControllerNode::on_param_change, this, std::placeholders::_1));
 
   RCLCPP_INFO(
-    get_logger(), "dispatcher_controller started in mode [%s], kafka_sink [%s], mosquitto_sink [%s]",
+    get_logger(),
+    "dispatcher_controller started in mode [%s], kafka_sink [%s], mosquitto_sink [%s], "
+    "zenoh_sink [%s]",
     mode_to_string(selection_mode_).c_str(), kafka_sink_node_name_.c_str(),
-    mosquitto_sink_node_name_.c_str());
+    mosquitto_sink_node_name_.c_str(), zenoh_sink_node_name_.c_str());
 
   if (selection_mode_ == SelectionMode::FILE && auto_apply_on_mode_change_ &&
     !selection_file_path_.empty())
@@ -597,6 +612,17 @@ void DispatcherControllerNode::handle_stop_streaming(
       response->message = error;
       return;
     }
+    if (!deactivate_sink(
+        "zenoh_sink", zenoh_sink_node_name_, zenoh_change_state_client_,
+        zenoh_get_state_client_, error))
+    {
+      phase_ = ControllerPhase::ERROR;
+      last_error_ = error;
+      last_error_stamp_ = now();
+      response->success = false;
+      response->message = error;
+      return;
+    }
 
     if (!clear_active_topic_tools(error)) {
       phase_ = ControllerPhase::ERROR;
@@ -653,6 +679,14 @@ void DispatcherControllerNode::handle_get_status(
     } else {
       response->mosquitto_sink_state = "disabled";
     }
+    std::optional<uint8_t> zenoh_state;
+    if (!zenoh_sink_node_name_.empty()) {
+      zenoh_state = get_sink_state("zenoh_sink", zenoh_get_state_client_);
+      response->zenoh_sink_state =
+        zenoh_state ? (state_string(*zenoh_state)) : "unknown";
+    } else {
+      response->zenoh_sink_state = "disabled";
+    }
     bool streaming_active = false;
     if (!kafka_sink_node_name_.empty()) {
       streaming_active = streaming_active || (kafka_state &&
@@ -661,6 +695,10 @@ void DispatcherControllerNode::handle_get_status(
     if (!mosquitto_sink_node_name_.empty()) {
       streaming_active = streaming_active || (mosquitto_state &&
         *mosquitto_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
+    }
+    if (!zenoh_sink_node_name_.empty()) {
+      streaming_active = streaming_active || (zenoh_state &&
+        *zenoh_state == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
     }
     response->streaming_active = streaming_active;
     response->applied_topics = applied_selection_.sink_topics.empty() ?
@@ -880,6 +918,13 @@ bool DispatcherControllerNode::apply_selection(
     return fail_with_rollback(error_out);
   }
 
+  if (!apply_selection_to_sink(
+      "zenoh_sink", zenoh_sink_node_name_, zenoh_change_state_client_,
+      zenoh_get_state_client_, zenoh_set_parameters_client_, plan.sink_topics, error_out))
+  {
+    return fail_with_rollback(error_out);
+  }
+
   applied_selection_.topics = validated_topics;
   applied_selection_.sink_topics = plan.sink_topics;
   applied_selection_.timestamp = now();
@@ -911,6 +956,14 @@ bool DispatcherControllerNode::rollback_failed_selection(std::string & error_out
       mosquitto_get_state_client_, step_error))
   {
     rollback_errors.push_back("mosquitto_sink deactivate: " + step_error);
+  }
+
+  step_error.clear();
+  if (!deactivate_sink(
+      "zenoh_sink", zenoh_sink_node_name_, zenoh_change_state_client_,
+      zenoh_get_state_client_, step_error))
+  {
+    rollback_errors.push_back("zenoh_sink deactivate: " + step_error);
   }
 
   step_error.clear();

@@ -199,6 +199,9 @@ private:
   rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr mosquitto_change_state_client_;
   rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr mosquitto_get_state_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr mosquitto_set_parameters_client_;
+  rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr zenoh_change_state_client_;
+  rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr zenoh_get_state_client_;
+  rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr zenoh_set_parameters_client_;
   rclcpp::Client<introspection_manager_msgs::srv::GetTopics>::SharedPtr introspection_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr introspection_param_client_;
   rclcpp::Client<composition_interfaces::srv::LoadNode>::SharedPtr load_node_client_;
@@ -211,6 +214,7 @@ private:
   // Parameters
   std::string kafka_sink_node_name_;
   std::string mosquitto_sink_node_name_;
+  std::string zenoh_sink_node_name_;
   std::string introspection_service_name_;
   std::string introspection_node_name_;
   bool validate_topics_;

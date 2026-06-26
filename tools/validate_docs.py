@@ -26,6 +26,12 @@ NODE_SOURCES = {
     "mosquitto_sink": [
         REPO / "mosquitto_bridge/mosquitto_sink/src/mosquitto_sink_node.cpp",
     ],
+    "zenoh_sink": [
+        REPO / "zenoh_bridge/zenoh_sink/src/zenoh_sink_node.cpp",
+    ],
+    "zenoh_source": [
+        REPO / "zenoh_bridge/zenoh_source/src/zenoh_source_node.cpp",
+    ],
 }
 
 DECLARE_RE = re.compile(r'declare_parameter(?:<[^(]+>)?\(\s*"([^"]+)"')
@@ -57,7 +63,10 @@ DOC_CLAIMS = {
     },
     "kafka_source": {
         "kafka.bootstrap_servers", "kafka.group_id",
-        "kafka.topic_pattern", "kafka.offset_reset",
+        "kafka.topic_pattern", "kafka.offset_reset", "kafka.allowed_types",
+        "ros_topic_prefix", "qos_depth",
+        "metrics.enabled", "metrics.interval_ms", "metrics.topic",
+        "topic_mappings",
     },
     "kafka_cdr_to_json": {
         "kafka.bootstrap_servers", "kafka.group_id",
@@ -69,6 +78,7 @@ DOC_CLAIMS = {
     "dispatcher_controller": {
         "selection_mode", "selection_file_path", "auto_apply_on_mode_change",
         "validate_topics", "kafka_sink_node_name", "mosquitto_sink_node_name",
+        "zenoh_sink_node_name",
         "allow_missing_sinks", "component_container_name",
         "introspection_service_name", "introspection_node_name",
         "disable_introspection_after_apply", "all_mode_max_topics",
@@ -86,6 +96,20 @@ DOC_CLAIMS = {
         "mqtt.fixed_topic", "mqtt.payload_format", "mqtt.use_tls",
         "mqtt.ca_cert_path", "mqtt.lwt_topic", "mqtt.lwt_payload",
         "mqtt.lwt_qos", "mqtt.lwt_retain",
+        "metrics.enabled", "metrics.interval_ms", "metrics.topic",
+    },
+    "zenoh_sink": {
+        "subscriptions_yaml", "qos_depth",
+        "metrics.enabled", "metrics.interval_ms", "metrics.topic",
+        "zenoh.mode", "zenoh.connect", "zenoh.listen", "zenoh.config_path",
+        "zenoh.key_prefix", "zenoh.topic_mapping_mode", "zenoh.fixed_keyexpr",
+        "zenoh.payload_format", "zenoh.congestion_control",
+        "zenoh.priority", "zenoh.express", "zenoh.message_key",
+    },
+    "zenoh_source": {
+        "zenoh.mode", "zenoh.connect", "zenoh.listen", "zenoh.config_path",
+        "zenoh.key_expr", "zenoh.key_prefix", "zenoh.allowed_types",
+        "ros_topic_prefix", "qos_depth",
         "metrics.enabled", "metrics.interval_ms", "metrics.topic",
     },
 }

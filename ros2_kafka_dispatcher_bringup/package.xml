@@ -15,6 +15,7 @@
   <depend>dispatcher_controller</depend>
   <depend>kafka_sink</depend>
   <depend>mosquitto_sink</depend>
+  <depend>zenoh_sink</depend>
   <depend>introspection_manager</depend>
   <depend>plugin_loader</depend>
   <depend>plugin_interfaces</depend>
