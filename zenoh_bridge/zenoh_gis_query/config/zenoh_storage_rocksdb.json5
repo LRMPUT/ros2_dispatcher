@@ -1,0 +1,13 @@
+{
+  plugins: {
+    storage_manager: {
+      volumes: { rocksdb: {} },
+      storages: {
+        ros2_history: {
+          key_expr: "ros2/**",
+          volume: { id: "rocksdb", dir: "/ws/zenoh_storage", create_db: true }
+        }
+      }
+    }
+  }
+}

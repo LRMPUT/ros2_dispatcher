@@ -17,8 +17,11 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
@@ -52,6 +55,40 @@ bool read_file(const std::string & path, std::string * out, std::string * error_
   }
   *out = std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
   return true;
+}
+
+/// @brief Attempt to pull the latest stored NavSatFix for @p robot from a Zenoh
+///        storage (e.g. zenohd + storage-manager + rocksdb backend).
+///
+/// Issues a bounded Session::get with a 200 ms timeout and decodes the first
+/// reply.  Returns an invalid FixSample{} when no reply arrives or the payload
+/// cannot be decoded.
+///
+/// CONCURRENCY: must be called WITHOUT holding state_mutex_. The caller is
+/// responsible for snapshotting rt_ into a local shared_ptr while holding the
+/// lock, then releasing the lock before passing *session here.
+FixSample fetch_stored_fix(
+  zenoh::Session & session,
+  const std::string & robot,
+  const rclcpp::Logger & logger)
+{
+  try {
+    zenoh::Session::GetOptions opts = zenoh::Session::GetOptions::create_default();
+    opts.timeout_ms = 200;
+    auto handler = session.get(
+      zenoh::KeyExpr("ros2/" + robot + "/gps/fix"), "",
+      zenoh::channels::FifoChannel(1), std::move(opts));
+    // recv() blocks until a reply arrives or the 200 ms timeout closes the channel.
+    auto result = handler.recv();
+    if (auto * rp = std::get_if<zenoh::Reply>(&result)) {
+      if (rp->is_ok()) {
+        return decode_navsatfix(rp->get_ok().get_payload().as_vector());
+      }
+    }
+  } catch (const zenoh::ZException & ex) {
+    RCLCPP_DEBUG(logger, "Storage get for '%s': %s", robot.c_str(), ex.what());
+  }
+  return FixSample{};
 }
 }  // namespace
 
@@ -228,6 +265,12 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         std::move(on_pos),
         zenoh::closures::none));
 
+    // --- geofence queryable ---------------------------------------------------
+    // For each live robot: if its position is in latest_ use it directly; if
+    // not, attempt a bounded session.get to pull the last stored value from
+    // a Zenoh storage (e.g. zenohd + storage-manager + rocksdb backend).
+    // CONCURRENCY: rt_ is snapshotted inside state_mutex_ and the get is
+    // issued AFTER the lock is released (never hold state_mutex_ across get).
     auto on_geofence = [this](const zenoh::Query & q) {
         if (!is_active_.load(std::memory_order_acquire)) {return;}
         // Parse selector params: reconstruct "key?params" for parse_selector_params.
@@ -238,31 +281,55 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         const auto params = parse_selector_params(full_selector);
         const std::string plot_id = params.count("plot") ? params.at("plot") : "";
 
-        // Snapshot state under lock; release before calling reply.
-        nlohmann::json inside = nlohmann::json::array();
-        uint64_t contributed = 0, expected = 0;
-        int64_t max_stale = 0;
         const int64_t now = this->get_clock()->now().nanoseconds();
+
+        // plots_ is immutable after on_configure: safe to read without the lock.
+        const Plot * plot = nullptr;
+        for (const auto & p : plots_) {
+          if (p.id == plot_id) {plot = &p; break;}
+        }
+
+        // Snapshot mutable state under lock; also capture rt_ for the get below.
+        std::set<std::string> live_snap;
+        std::unordered_map<std::string, FixSample> latest_snap;
+        std::shared_ptr<ZenohRuntime> rt_snap;
         {
           std::lock_guard<std::mutex> lk(state_mutex_);
-          const Plot * plot = nullptr;
-          for (const auto & p : plots_) {
-            if (p.id == plot_id) {plot = &p; break;}
-          }
-          expected = live_robots_.size();
-          for (const auto & robot : live_robots_) {
-            auto it = latest_.find(robot);
-            if (it == latest_.end()) {continue;}
-            contributed++;
-            max_stale = std::max(max_stale, now - it->second.stamp_ns);
-            if (plot && point_in_polygon({it->second.lat, it->second.lon}, plot->ring)) {
-              inside.push_back(robot);
+          live_snap = live_robots_;
+          latest_snap = latest_;
+          rt_snap = rt_;
+        }
+
+        // Attempt storage get for robots missing from the in-memory snapshot.
+        // Lock is NOT held here; uses rt_snap (local copy of rt_).
+        if (rt_snap && rt_snap->session) {
+          for (const auto & robot : live_snap) {
+            if (latest_snap.find(robot) == latest_snap.end()) {
+              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
+              if (fix.valid) {
+                latest_snap[robot] = fix;
+              }
             }
           }
         }
 
+        // Compute from snapshots (no lock needed).
+        nlohmann::json inside = nlohmann::json::array();
+        uint64_t contributed = 0;
+        const uint64_t expected = live_snap.size();
+        int64_t max_stale = 0;
+        for (const auto & robot : live_snap) {
+          auto it = latest_snap.find(robot);
+          if (it == latest_snap.end()) {continue;}
+          contributed++;
+          max_stale = std::max(max_stale, now - it->second.stamp_ns);
+          if (plot && point_in_polygon({it->second.lat, it->second.lon}, plot->ring)) {
+            inside.push_back(robot);
+          }
+        }
+
         // Build reply JSON (no lock held).
-        // fidelity_horizon_ms_ set in on_configure; immutable after activation, no lock needed.
+        // fidelity_horizon_ms_ set in on_configure; immutable after activation.
         const auto qod = compute_qod(
           contributed, expected, max_stale,
           static_cast<int64_t>(fidelity_horizon_ms_) * 1'000'000LL);
@@ -282,6 +349,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         std::move(on_geofence),
         zenoh::closures::none));
 
+    // --- collision queryable --------------------------------------------------
     auto on_collision = [this](const zenoh::Query & q) {
         if (!is_active_.load(std::memory_order_acquire)) {return;}
         // Parse selector params: read radius (default 2.0 m).
@@ -299,41 +367,64 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
           }
         }
 
-        // Snapshot state under lock; release before calling reply.
-        nlohmann::json pairs = nlohmann::json::array();
-        uint64_t contributed = 0, expected = 0;
-        int64_t max_stale = 0;
         const int64_t now = this->get_clock()->now().nanoseconds();
+
+        // Snapshot mutable state under lock; capture rt_ for storage fallback.
+        std::set<std::string> live_snap;
+        std::unordered_map<std::string, FixSample> latest_snap;
+        std::shared_ptr<ZenohRuntime> rt_snap;
         {
           std::lock_guard<std::mutex> lk(state_mutex_);
-          expected = live_robots_.size();
-          // Collect robots that have a known position and track staleness.
-          std::vector<std::string> robots_with_pos;
-          for (const auto & robot : live_robots_) {
-            auto it = latest_.find(robot);
-            if (it == latest_.end()) {continue;}
-            contributed++;
-            max_stale = std::max(max_stale, now - it->second.stamp_ns);
-            robots_with_pos.push_back(robot);
-          }
-          // Iterate over all unordered pairs (a, b) with a < b by index.
-          for (size_t i = 0; i < robots_with_pos.size(); ++i) {
-            for (size_t j = i + 1; j < robots_with_pos.size(); ++j) {
-              const auto & ra = robots_with_pos[i];
-              const auto & rb = robots_with_pos[j];
-              const auto & fix_a = latest_.at(ra);
-              const auto & fix_b = latest_.at(rb);
-              const double dist =
-                haversine_m({fix_a.lat, fix_a.lon}, {fix_b.lat, fix_b.lon});
-              if (dist < radius) {
-                pairs.push_back(nlohmann::json::array({ra, rb, dist}));
+          live_snap = live_robots_;
+          latest_snap = latest_;
+          rt_snap = rt_;
+        }
+
+        // Attempt storage get for robots missing from the in-memory snapshot.
+        // Lock is NOT held here; uses rt_snap (local copy of rt_).
+        if (rt_snap && rt_snap->session) {
+          for (const auto & robot : live_snap) {
+            if (latest_snap.find(robot) == latest_snap.end()) {
+              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
+              if (fix.valid) {
+                latest_snap[robot] = fix;
               }
             }
           }
         }
 
+        // Compute from snapshots (no lock needed).
+        nlohmann::json pairs = nlohmann::json::array();
+        uint64_t contributed = 0;
+        const uint64_t expected = live_snap.size();
+        int64_t max_stale = 0;
+
+        // Collect robots that have a known position and track staleness.
+        std::vector<std::string> robots_with_pos;
+        for (const auto & robot : live_snap) {
+          auto it = latest_snap.find(robot);
+          if (it == latest_snap.end()) {continue;}
+          contributed++;
+          max_stale = std::max(max_stale, now - it->second.stamp_ns);
+          robots_with_pos.push_back(robot);
+        }
+        // Iterate over all unordered pairs (a, b) with a < b by index.
+        for (size_t i = 0; i < robots_with_pos.size(); ++i) {
+          for (size_t j = i + 1; j < robots_with_pos.size(); ++j) {
+            const auto & ra = robots_with_pos[i];
+            const auto & rb = robots_with_pos[j];
+            const auto & fix_a = latest_snap.at(ra);
+            const auto & fix_b = latest_snap.at(rb);
+            const double dist =
+              haversine_m({fix_a.lat, fix_a.lon}, {fix_b.lat, fix_b.lon});
+            if (dist < radius) {
+              pairs.push_back(nlohmann::json::array({ra, rb, dist}));
+            }
+          }
+        }
+
         // Build reply JSON (no lock held).
-        // fidelity_horizon_ms_ is immutable after activation; no lock needed.
+        // fidelity_horizon_ms_ is immutable after activation.
         const auto qod = compute_qod(
           contributed, expected, max_stale,
           static_cast<int64_t>(fidelity_horizon_ms_) * 1'000'000LL);
@@ -353,6 +444,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         std::move(on_collision),
         zenoh::closures::none));
 
+    // --- proximity queryable --------------------------------------------------
     auto on_proximity = [this](const zenoh::Query & q) {
         if (!is_active_.load(std::memory_order_acquire)) {return;}
         // Parse selector params: read sensor id and range (default 10.0 m).
@@ -371,35 +463,59 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
           }
         }
 
-        // Snapshot state under lock; release before calling reply.
-        nlohmann::json near = nlohmann::json::array();
-        uint64_t contributed = 0, expected = 0;
-        int64_t max_stale = 0;
         const int64_t now = this->get_clock()->now().nanoseconds();
+
+        // sensors_ is immutable after on_configure: safe to read without the lock.
+        const Sensor * sensor = nullptr;
+        for (const auto & s : sensors_) {
+          if (s.id == sensor_id) {sensor = &s; break;}
+        }
+
+        // Snapshot mutable state under lock; capture rt_ for storage fallback.
+        std::set<std::string> live_snap;
+        std::unordered_map<std::string, FixSample> latest_snap;
+        std::shared_ptr<ZenohRuntime> rt_snap;
         {
           std::lock_guard<std::mutex> lk(state_mutex_);
-          const Sensor * sensor = nullptr;
-          for (const auto & s : sensors_) {
-            if (s.id == sensor_id) {sensor = &s; break;}
-          }
-          expected = live_robots_.size();
-          for (const auto & robot : live_robots_) {
-            auto it = latest_.find(robot);
-            if (it == latest_.end()) {continue;}
-            contributed++;
-            max_stale = std::max(max_stale, now - it->second.stamp_ns);
-            if (sensor) {
-              const double dist =
-                haversine_m({it->second.lat, it->second.lon}, sensor->pos);
-              if (dist < range) {
-                near.push_back(nlohmann::json::array({robot, dist}));
+          live_snap = live_robots_;
+          latest_snap = latest_;
+          rt_snap = rt_;
+        }
+
+        // Attempt storage get for robots missing from the in-memory snapshot.
+        // Lock is NOT held here; uses rt_snap (local copy of rt_).
+        if (rt_snap && rt_snap->session) {
+          for (const auto & robot : live_snap) {
+            if (latest_snap.find(robot) == latest_snap.end()) {
+              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
+              if (fix.valid) {
+                latest_snap[robot] = fix;
               }
             }
           }
         }
 
+        // Compute from snapshots (no lock needed).
+        nlohmann::json near = nlohmann::json::array();
+        uint64_t contributed = 0;
+        const uint64_t expected = live_snap.size();
+        int64_t max_stale = 0;
+        for (const auto & robot : live_snap) {
+          auto it = latest_snap.find(robot);
+          if (it == latest_snap.end()) {continue;}
+          contributed++;
+          max_stale = std::max(max_stale, now - it->second.stamp_ns);
+          if (sensor) {
+            const double dist =
+              haversine_m({it->second.lat, it->second.lon}, sensor->pos);
+            if (dist < range) {
+              near.push_back(nlohmann::json::array({robot, dist}));
+            }
+          }
+        }
+
         // Build reply JSON (no lock held).
-        // fidelity_horizon_ms_ is immutable after activation; no lock needed.
+        // fidelity_horizon_ms_ is immutable after activation.
         const auto qod = compute_qod(
           contributed, expected, max_stale,
           static_cast<int64_t>(fidelity_horizon_ms_) * 1'000'000LL);
