@@ -83,6 +83,7 @@ public:
     zenoh::CongestionControl congestion_control,
     zenoh::Priority priority,
     bool express,
+    const std::string & liveliness_key,
     std::string * error_message)
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -108,10 +109,17 @@ public:
       last_error_.clear();
       connected_.store(true, std::memory_order_release);
       connected_since_ = std::chrono::steady_clock::now();
+
+      if (!liveliness_key.empty()) {
+        live_token_.emplace(
+          session_->liveliness_declare_token(zenoh::KeyExpr(liveliness_key)));
+      }
+
       return true;
     } catch (const zenoh::ZException & ex) {
       last_error_ = ex.what();
       connected_.store(false, std::memory_order_release);
+      live_token_.reset();
       session_.reset();
       if (error_message) {
         *error_message = last_error_;
@@ -124,6 +132,7 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     publishers_.clear();
+    live_token_.reset();
     session_.reset();
     connected_.store(false, std::memory_order_release);
   }
@@ -212,6 +221,7 @@ private:
 
   mutable std::mutex mutex_;
   std::unique_ptr<zenoh::Session> session_;
+  std::optional<zenoh::LivelinessToken> live_token_;
   std::unordered_map<std::string, zenoh::Publisher> publishers_;
   zenoh::CongestionControl congestion_control_{Z_CONGESTION_CONTROL_DROP};
   zenoh::Priority priority_{Z_PRIORITY_DATA};
@@ -713,6 +723,9 @@ ZenohSinkNode::ZenohSinkNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<bool>("zenoh.express", zenoh_parameters_.express);
   // optional: when set, overrides header.frame_id in published messages (for nebula parsing)
   this->declare_parameter<std::string>("zenoh.message_key", "");
+  // optional: when set, a zenoh liveliness token is declared on this key expression so
+  // membership-tracking nodes can detect robot presence/dropout via liveliness subscribers.
+  this->declare_parameter<std::string>("gis.liveliness_key", "");
 
   on_parameters_set_handle_ = this->add_on_set_parameters_callback(
     std::bind(&ZenohSinkNode::on_parameters_set, this, std::placeholders::_1));
@@ -900,6 +913,15 @@ rcl_interfaces::msg::SetParametersResult ZenohSinkNode::on_parameters_set(
       } else if (name == "zenoh.message_key") {
         pending_zenoh.message_key = param.as_string();
       }
+    } else if (name == "gis.liveliness_key") {
+      const auto & current_state = this->get_current_state();
+      if (current_state.id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+        result.successful = false;
+        result.reason = "deactivate first";
+        return result;
+      }
+      zenoh_update_required = true;
+      pending_zenoh.liveliness_key = param.as_string();
     } else if (name.rfind("metrics.", 0) == 0) {
       const auto & current_state = this->get_current_state();
       if (current_state.id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
@@ -1058,6 +1080,7 @@ bool ZenohSinkNode::configure_zenoh_parameters(std::string * error_message)
   pending.priority = this->get_parameter("zenoh.priority").as_int();
   pending.express = this->get_parameter("zenoh.express").as_bool();
   pending.message_key = this->get_parameter("zenoh.message_key").as_string();
+  pending.liveliness_key = this->get_parameter("gis.liveliness_key").as_string();
 
   if (!validate_zenoh_parameters(pending, error_message)) {
     return false;
@@ -1085,6 +1108,7 @@ bool ZenohSinkNode::start_client()
       congestion_control,
       priority,
       zenoh_parameters_.express,
+      zenoh_parameters_.liveliness_key,
       &error_message))
   {
     RCLCPP_ERROR(get_logger(), "Zenoh session open failed: %s", error_message.c_str());

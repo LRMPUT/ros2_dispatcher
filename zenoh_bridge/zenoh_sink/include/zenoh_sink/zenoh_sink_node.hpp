@@ -101,6 +101,9 @@ private:
     bool express{false};
     // optional: when set, overrides header.frame_id in published messages (for nebula parsing)
     std::string message_key;
+    // optional: when set, a zenoh liveliness token is declared on this key expression so
+    // membership-tracking nodes (e.g. zenoh_gis_query) can detect robot presence/dropout.
+    std::string liveliness_key;
   };
 
   struct SubscriptionRuntime
