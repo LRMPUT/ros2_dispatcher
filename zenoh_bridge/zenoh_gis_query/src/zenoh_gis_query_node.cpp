@@ -310,6 +310,7 @@ void ZenohGisQueryNode::on_position_sample(
     std::string event;
   };
   std::vector<CrossingEvent> events;
+  std::shared_ptr<ZenohRuntime> rt_snap;
 
   {
     std::lock_guard<std::mutex> lk(state_mutex_);
@@ -336,10 +337,15 @@ void ZenohGisQueryNode::on_position_sample(
       }
     }
     prev_inside = std::move(new_inside);
+    // Snapshot rt_ under the lock so the refcount keeps ZenohRuntime alive
+    // across the put calls below — avoids a data race with stop_session()
+    // which does std::exchange(rt_, nullptr) on the deactivate thread.
+    rt_snap = rt_;
   }
 
   // Publish crossing events outside the lock (do not hold state_mutex_ across put).
-  if (!events.empty() && rt_ && rt_->session) {
+  // Use rt_snap (local copy), never the member rt_, to avoid the data race.
+  if (!events.empty() && rt_snap && rt_snap->session) {
     const std::string alert_key = "gis/alert/geofence/" + robot;
     for (const auto & ev : events) {
       const nlohmann::json alert = {
@@ -349,7 +355,7 @@ void ZenohGisQueryNode::on_position_sample(
         {"stamp_ns", fix.stamp_ns}
       };
       try {
-        rt_->session->put(
+        rt_snap->session->put(
           zenoh::KeyExpr(alert_key),
           zenoh::Bytes(alert.dump()));
       } catch (const zenoh::ZException & ex) {
