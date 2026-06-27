@@ -128,6 +128,17 @@ ZenohGisQueryNode::CallbackReturn ZenohGisQueryNode::on_configure(
   fidelity_horizon_ms_ = static_cast<int>(
     this->get_parameter("gis.fidelity_horizon_ms").as_int());
 
+  if (zenoh_parameters_.mode != "peer" &&
+    zenoh_parameters_.mode != "client" &&
+    zenoh_parameters_.mode != "router")
+  {
+    RCLCPP_ERROR(
+      get_logger(),
+      "zenoh.mode must be 'peer', 'client', or 'router' (got '%s').",
+      zenoh_parameters_.mode.c_str());
+    return CallbackReturn::FAILURE;
+  }
+
   const std::string share_dir =
     ament_index_cpp::get_package_share_directory("zenoh_gis_query");
   if (plots_path_.empty()) {
@@ -256,6 +267,13 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         if (!is_active_.load(std::memory_order_acquire)) {return;}
         if (s.get_kind() != Z_SAMPLE_KIND_PUT) {return;}
         std::string key{s.get_keyexpr().as_string_view()};
+        // Guard: only process NavSatFix samples (key must end with /gps/fix).
+        static const std::string kFixSuffix = "/gps/fix";
+        if (key.size() < kFixSuffix.size() ||
+          key.compare(key.size() - kFixSuffix.size(), kFixSuffix.size(), kFixSuffix) != 0)
+        {
+          return;
+        }
         std::vector<uint8_t> payload = s.get_payload().as_vector();
         on_position_sample(key, payload);
       };

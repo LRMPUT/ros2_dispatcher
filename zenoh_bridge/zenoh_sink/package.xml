@@ -22,6 +22,7 @@
   <depend>rmw</depend>
   <depend>std_msgs</depend>
   <depend>zenoh_cpp_vendor</depend>
+  <depend>nlohmann-json-dev</depend>
 
   <test_depend>ament_cmake_ros</test_depend>
   <test_depend>ament_lint_auto</test_depend>
