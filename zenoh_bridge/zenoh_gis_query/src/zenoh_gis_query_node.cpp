@@ -67,28 +67,54 @@ bool read_file(const std::string & path, std::string * out, std::string * error_
 /// CONCURRENCY: must be called WITHOUT holding state_mutex_. The caller is
 /// responsible for snapshotting rt_ into a local shared_ptr while holding the
 /// lock, then releasing the lock before passing *session here.
-FixSample fetch_stored_fix(
+/// Pulls the last stored fix for several robots CONCURRENTLY. All gets are
+/// issued first (each `session.get` returns immediately; its channel fills
+/// asynchronously), then the replies are collected — so the N gets overlap and
+/// the total wait is ~one 200 ms timeout instead of N * 200 ms. Returns only the
+/// robots whose stored value decoded to a valid fix.
+std::unordered_map<std::string, FixSample> fetch_stored_fixes_parallel(
   zenoh::Session & session,
-  const std::string & robot,
+  const std::vector<std::string> & robots,
   const rclcpp::Logger & logger)
 {
-  try {
-    zenoh::Session::GetOptions opts = zenoh::Session::GetOptions::create_default();
-    opts.timeout_ms = 200;
-    auto handler = session.get(
-      zenoh::KeyExpr("ros2/" + robot + "/gps/fix"), "",
-      zenoh::channels::FifoChannel(1), std::move(opts));
-    // recv() blocks until a reply arrives or the 200 ms timeout closes the channel.
-    auto result = handler.recv();
-    if (auto * rp = std::get_if<zenoh::Reply>(&result)) {
-      if (rp->is_ok()) {
-        return decode_navsatfix(rp->get_ok().get_payload().as_vector());
-      }
+  // Deduce the channel handler type from the exact get() call used below.
+  using GetHandler = decltype(session.get(
+      zenoh::KeyExpr("ros2/probe/gps/fix"), "",
+      zenoh::channels::FifoChannel(1), zenoh::Session::GetOptions::create_default()));
+
+  std::vector<std::pair<std::string, GetHandler>> pending;
+  pending.reserve(robots.size());
+  for (const auto & robot : robots) {
+    try {
+      zenoh::Session::GetOptions opts = zenoh::Session::GetOptions::create_default();
+      opts.timeout_ms = 200;
+      pending.emplace_back(
+        robot,
+        session.get(
+          zenoh::KeyExpr("ros2/" + robot + "/gps/fix"), "",
+          zenoh::channels::FifoChannel(1), std::move(opts)));
+    } catch (const zenoh::ZException & ex) {
+      RCLCPP_DEBUG(logger, "Storage get(issue) for '%s': %s", robot.c_str(), ex.what());
     }
-  } catch (const zenoh::ZException & ex) {
-    RCLCPP_DEBUG(logger, "Storage get for '%s': %s", robot.c_str(), ex.what());
   }
-  return FixSample{};
+
+  std::unordered_map<std::string, FixSample> out;
+  for (auto & entry : pending) {
+    try {
+      // recv() blocks until a reply arrives or the 200 ms timeout closes the
+      // channel; because the gets were all issued above, they wait in parallel.
+      auto result = entry.second.recv();
+      if (auto * rp = std::get_if<zenoh::Reply>(&result)) {
+        if (rp->is_ok()) {
+          auto fix = decode_navsatfix(rp->get_ok().get_payload().as_vector());
+          if (fix.valid) {out.emplace(entry.first, fix);}
+        }
+      }
+    } catch (const zenoh::ZException & ex) {
+      RCLCPP_DEBUG(logger, "Storage get(recv) for '%s': %s", entry.first.c_str(), ex.what());
+    }
+  }
+  return out;
 }
 }  // namespace
 
@@ -322,13 +348,12 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         // Attempt storage get for robots missing from the in-memory snapshot.
         // Lock is NOT held here; uses rt_snap (local copy of rt_).
         if (rt_snap && rt_snap->session) {
+          std::vector<std::string> missing;
           for (const auto & robot : live_snap) {
-            if (latest_snap.find(robot) == latest_snap.end()) {
-              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
-              if (fix.valid) {
-                latest_snap[robot] = fix;
-              }
-            }
+            if (latest_snap.find(robot) == latest_snap.end()) {missing.push_back(robot);}
+          }
+          for (auto & rf : fetch_stored_fixes_parallel(*rt_snap->session, missing, get_logger())) {
+            latest_snap[rf.first] = rf.second;
           }
         }
 
@@ -402,13 +427,12 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         // Attempt storage get for robots missing from the in-memory snapshot.
         // Lock is NOT held here; uses rt_snap (local copy of rt_).
         if (rt_snap && rt_snap->session) {
+          std::vector<std::string> missing;
           for (const auto & robot : live_snap) {
-            if (latest_snap.find(robot) == latest_snap.end()) {
-              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
-              if (fix.valid) {
-                latest_snap[robot] = fix;
-              }
-            }
+            if (latest_snap.find(robot) == latest_snap.end()) {missing.push_back(robot);}
+          }
+          for (auto & rf : fetch_stored_fixes_parallel(*rt_snap->session, missing, get_logger())) {
+            latest_snap[rf.first] = rf.second;
           }
         }
 
@@ -504,13 +528,12 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         // Attempt storage get for robots missing from the in-memory snapshot.
         // Lock is NOT held here; uses rt_snap (local copy of rt_).
         if (rt_snap && rt_snap->session) {
+          std::vector<std::string> missing;
           for (const auto & robot : live_snap) {
-            if (latest_snap.find(robot) == latest_snap.end()) {
-              auto fix = fetch_stored_fix(*rt_snap->session, robot, get_logger());
-              if (fix.valid) {
-                latest_snap[robot] = fix;
-              }
-            }
+            if (latest_snap.find(robot) == latest_snap.end()) {missing.push_back(robot);}
+          }
+          for (auto & rf : fetch_stored_fixes_parallel(*rt_snap->session, missing, get_logger())) {
+            latest_snap[rf.first] = rf.second;
           }
         }
 
