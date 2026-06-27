@@ -1,0 +1,34 @@
+# Phase 2a resilience topology: cloud zenoh_gis_query hub + edge robot(s) as
+# Zenoh peers over an emulated WAN. ROS_LOCALHOST_ONLY=1 keeps ROS/DDS local to
+# each container so ONLY Zenoh (TCP) crosses the network. NET_ADMIN allows `tc
+# netem` fault injection. This static file is the 1-edge smoke / reference;
+# run_resilience.sh generates the N-edge compose for the sweep.
+services:
+  cloud_query:
+    image: ${RKD_GIS_IMAGE:-rkd:gis-netem}
+    hostname: cloud_query
+    environment:
+      ROS_LOCALHOST_ONLY: "1"
+    cap_add: ["NET_ADMIN"]
+    volumes:
+      - ./:/phase2:ro
+    entrypoint: ["bash", "/phase2/cloud_entrypoint.sh"]
+    networks: ["wan"]
+
+  edge_robot_1:
+    image: ${RKD_GIS_IMAGE:-rkd:gis-netem}
+    hostname: edge_robot_1
+    depends_on: ["cloud_query"]
+    environment:
+      ROS_LOCALHOST_ONLY: "1"
+      ROBOT_ID: "1"
+      CLOUD_ENDPOINT: "tcp/cloud_query:7447"
+    cap_add: ["NET_ADMIN"]
+    volumes:
+      - ./:/phase2:ro
+    entrypoint: ["bash", "/phase2/edge_entrypoint.sh"]
+    networks: ["wan"]
+
+networks:
+  wan:
+    driver: bridge

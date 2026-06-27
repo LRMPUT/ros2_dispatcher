@@ -24,6 +24,7 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
   ${RDKAFKA_LIBRARIES}
   Threads::Threads
+  kafka_client::kafka_client
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}

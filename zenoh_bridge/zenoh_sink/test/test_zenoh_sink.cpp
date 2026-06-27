@@ -1,0 +1,118 @@
+// Copyright 2025 Maciej Krupka
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "gtest/gtest.h"
+#include "zenoh_sink/zenoh_sink_node.hpp"
+
+TEST(ParseSubscriptions, ValidYamlParses) {
+  const std::string yaml_text =
+    R"(
+  - topic_name: /foo
+    msg_type: std_msgs/msg/String
+    zenoh_name: foo/json
+  - topic_name: /bar
+    msg_type: std_msgs/msg/Int32
+  )";
+
+  auto result = zenoh_sink::parse_subscriptions_yaml(yaml_text);
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_EQ(result[0].topic_name, "/foo");
+  EXPECT_EQ(result[0].msg_type, "std_msgs/msg/String");
+  ASSERT_TRUE(result[0].zenoh_name.has_value());
+  EXPECT_EQ(*result[0].zenoh_name, "foo/json");
+  EXPECT_EQ(result[1].topic_name, "/bar");
+  EXPECT_EQ(result[1].msg_type, "std_msgs/msg/Int32");
+  EXPECT_FALSE(result[1].zenoh_name.has_value());
+}
+
+TEST(ParseSubscriptions, EmptyZenohNameTreatedAsAbsent) {
+  const std::string yaml_text =
+    R"(
+  - topic_name: /foo
+    msg_type: std_msgs/msg/String
+    zenoh_name: ""
+  )";
+
+  auto result = zenoh_sink::parse_subscriptions_yaml(yaml_text);
+  ASSERT_EQ(result.size(), 1u);
+  EXPECT_FALSE(result[0].zenoh_name.has_value());
+}
+
+TEST(ParseSubscriptions, InvalidYamlThrows) {
+  const std::string yaml_text = R"(
+  - topic_name: ""
+    msg_type: std_msgs/msg/String
+  )";
+
+  EXPECT_THROW(zenoh_sink::parse_subscriptions_yaml(yaml_text), std::runtime_error);
+}
+
+TEST(ParseSubscriptions, MissingMsgTypeThrows) {
+  const std::string yaml_text = R"(
+  - topic_name: /foo
+  )";
+
+  EXPECT_THROW(zenoh_sink::parse_subscriptions_yaml(yaml_text), std::runtime_error);
+}
+
+TEST(MessageKey, EmptyKeyIsNoop) {
+  std::string payload = R"({"header":{"frame_id":"original"},"data":1})";
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "");
+  EXPECT_FALSE(modified);
+  EXPECT_NE(payload.find("original"), std::string::npos);
+}
+
+TEST(MessageKey, OverridesFrameId) {
+  std::string payload =
+    R"({"header":{"stamp":{"sec":0,"nanosec":0},"frame_id":"old_frame"},"data":1})";
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "robot_2");
+  EXPECT_TRUE(modified);
+  EXPECT_NE(payload.find("robot_2"), std::string::npos);
+  EXPECT_EQ(payload.find("old_frame"), std::string::npos);
+}
+
+TEST(MessageKey, InjectsFrameIdWhenAbsent) {
+  std::string payload = R"({"header":{"stamp":{"sec":0,"nanosec":0}},"data":1})";
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "robot_3");
+  EXPECT_TRUE(modified);
+  EXPECT_NE(payload.find("robot_3"), std::string::npos);
+}
+
+TEST(MessageKey, NoHeaderIsNoop) {
+  std::string original = R"({"data":42})";
+  std::string payload = original;
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}
+
+TEST(MessageKey, InvalidJsonIsNoop) {
+  std::string original = "not json at all";
+  std::string payload = original;
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}
+
+TEST(MessageKey, HeaderNotObjectIsNoop) {
+  std::string original = R"({"header":"flat_string","data":1})";
+  std::string payload = original;
+  bool modified = zenoh_sink::apply_message_key_to_json(payload, "robot_1");
+  EXPECT_FALSE(modified);
+  EXPECT_EQ(payload, original);
+}

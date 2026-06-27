@@ -35,3 +35,10 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code local state (contains worktrees, can be >1GB)
+.claude/
+
+# Large data / result artifacts — do not commit to history
+*.bag
+*.tar.gz

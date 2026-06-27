@@ -1,0 +1,26 @@
+zenoh_sink:
+  ros__parameters:
+    qos_depth: 10
+    subscriptions_yaml: |
+      - topic_name: /demo/chatter
+        msg_type: std_msgs/msg/String
+        zenoh_name: custom/zenoh/key
+      - topic_name: /demo/number
+        msg_type: std_msgs/msg/Int32
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "zenoh_sink/metrics"
+    zenoh.mode: "peer"
+    # An empty YAML list [] cannot be type-inferred by ROS 2; leave unset for none.
+    # zenoh.connect: ["tcp/localhost:7447"]
+    # zenoh.listen: ["tcp/0.0.0.0:7447"]
+    zenoh.config_path: ""
+    zenoh.key_prefix: "ros2"
+    zenoh.topic_mapping_mode: "prefix_ros_topic"
+    zenoh.fixed_keyexpr: "ros2/raw"
+    zenoh.payload_format: "cdr"
+    zenoh.congestion_control: "drop"
+    zenoh.priority: 5
+    zenoh.express: false
+    # optional: when set, overrides header.frame_id in published messages (for nebula parsing)
+    # zenoh.message_key: ""

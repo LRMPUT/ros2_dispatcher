@@ -34,8 +34,12 @@ RUN rosdep init || true \
 WORKDIR /ws
 COPY . /ws/src
 
+# apt-get update is required so rosdep can resolve packages that are not already
+# in the base image's (stale) apt index — e.g. ros-${ROS_DISTRO}-zenoh-cpp-vendor.
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && rosdep install --from-paths src --ignore-src -y --rosdistro ${ROS_DISTRO}
+    && apt-get update \
+    && rosdep install --from-paths src --ignore-src -y --rosdistro ${ROS_DISTRO} \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
     && colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release
@@ -58,6 +62,7 @@ RUN apt-get update \
       librdkafka++1 \
       libpaho-mqtt1.3 \
       libpaho-mqttpp3-1 \
+      ros-${ROS_DISTRO}-zenoh-cpp-vendor \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 10001 ros \

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 project(dispatcher_controller)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_gtest REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
@@ -72,5 +73,25 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/)
 
 ament_export_targets(export_dispatcher_controller_node HAS_LIBRARY_TARGET)
+
+if(BUILD_TESTING)
+  ament_add_gtest(test_dispatcher_controller
+    test/test_dispatcher_controller.cpp
+  )
+  target_link_libraries(test_dispatcher_controller
+    dispatcher_controller_node
+    yaml-cpp
+    "${cpp_typesupport_target}"
+  )
+  ament_target_dependencies(test_dispatcher_controller
+    rclcpp
+    rclcpp_lifecycle
+    lifecycle_msgs
+    rcl_interfaces
+    rclcpp_components
+    composition_interfaces
+    introspection_manager_msgs
+  )
+endif()
 
 ament_package()

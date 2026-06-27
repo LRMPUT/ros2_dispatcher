@@ -11,6 +11,7 @@ def generate_launch_description():
     selection_file_path = LaunchConfiguration("selection_file_path")
     kafka_sink_node_name = LaunchConfiguration("kafka_sink_node_name")
     mosquitto_sink_node_name = LaunchConfiguration("mosquitto_sink_node_name")
+    zenoh_sink_node_name = LaunchConfiguration("zenoh_sink_node_name")
     validate_topics = LaunchConfiguration("validate_topics")
     subscriptions_yaml = LaunchConfiguration("subscriptions_yaml")
     qos_depth = LaunchConfiguration("qos_depth")
@@ -19,6 +20,7 @@ def generate_launch_description():
     controller_log_level = LaunchConfiguration("controller_log_level")
     kafka_sink_log_level = LaunchConfiguration("kafka_sink_log_level")
     mosquitto_sink_log_level = LaunchConfiguration("mosquitto_sink_log_level")
+    zenoh_sink_log_level = LaunchConfiguration("zenoh_sink_log_level")
 
     dispatcher_param_file = PathJoinSubstitution(
         [
@@ -41,6 +43,13 @@ def generate_launch_description():
             "mosquitto_sink.yaml",
         ]
     )
+    zenoh_param_file = PathJoinSubstitution(
+        [
+            FindPackageShare("ros2_kafka_dispatcher_bringup"),
+            "config",
+            "zenoh_sink.yaml",
+        ]
+    )
 
     return LaunchDescription(
         [
@@ -48,6 +57,7 @@ def generate_launch_description():
             DeclareLaunchArgument("selection_file_path", default_value=""),
             DeclareLaunchArgument("kafka_sink_node_name", default_value="/kafka_sink"),
             DeclareLaunchArgument("mosquitto_sink_node_name", default_value="/mosquitto_sink"),
+            DeclareLaunchArgument("zenoh_sink_node_name", default_value="/zenoh_sink"),
             DeclareLaunchArgument("validate_topics", default_value="false"),
             DeclareLaunchArgument("subscriptions_yaml", default_value=""),
             DeclareLaunchArgument("qos_depth", default_value="10"),
@@ -56,6 +66,7 @@ def generate_launch_description():
             DeclareLaunchArgument("controller_log_level", default_value="debug"),
             DeclareLaunchArgument("kafka_sink_log_level", default_value="info"),
             DeclareLaunchArgument("mosquitto_sink_log_level", default_value="info"),
+            DeclareLaunchArgument("zenoh_sink_log_level", default_value="info"),
             ComposableNodeContainer(
                 name=container_name,
                 namespace=container_namespace,
@@ -93,6 +104,19 @@ def generate_launch_description():
                         ],
                     ),
                     ComposableNode(
+                        package="zenoh_sink",
+                        plugin="zenoh_sink::ZenohSinkNode",
+                        name="zenoh_sink",
+                        extra_arguments=[{"--ros-args": ["--log-level", zenoh_sink_log_level]}],
+                        parameters=[
+                            zenoh_param_file,
+                            {
+                                "subscriptions_yaml": subscriptions_yaml,
+                                "qos_depth": qos_depth,
+                            },
+                        ],
+                    ),
+                    ComposableNode(
                         package="dispatcher_controller",
                         plugin="dispatcher_controller::DispatcherControllerNode",
                         name="dispatcher_controller",
@@ -104,6 +128,7 @@ def generate_launch_description():
                                 "selection_file_path": selection_file_path,
                                 "kafka_sink_node_name": kafka_sink_node_name,
                                 "mosquitto_sink_node_name": mosquitto_sink_node_name,
+                                "zenoh_sink_node_name": zenoh_sink_node_name,
                                 "validate_topics": validate_topics,
                             },
                         ],

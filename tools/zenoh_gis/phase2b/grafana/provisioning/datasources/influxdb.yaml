@@ -1,0 +1,9 @@
+apiVersion: 1
+datasources:
+  - name: InfluxDB-zenoh
+    uid: influxdb-zenoh
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: zenoh_ros2
+    isDefault: true

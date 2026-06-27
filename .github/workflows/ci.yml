@@ -78,6 +78,20 @@ jobs:
           docker run --rm ${{ steps.meta.outputs.image_name }}:builder \
             bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && source /ws/install/setup.bash && ros2 pkg list >/dev/null"
 
+      - name: Run colcon tests
+        run: |
+          # Run functional gtest suites only (-L gtest). Linters (cpplint,
+          # uncrustify, flake8, pep257, ...) are a manual pre-PR step per
+          # CLAUDE.md and are not gated here. gui_client is omitted: it is an
+          # ament_python package with no gtest suite.
+          docker run --rm ${{ steps.meta.outputs.image_name }}:builder \
+            bash -lc "set -eo pipefail; \
+                      source /opt/ros/${ROS_DISTRO}/setup.bash; \
+                      source /ws/install/setup.bash; \
+                      cd /ws; \
+                      colcon test --packages-select introspection_manager kafka_sink mosquitto_sink dispatcher_controller kafka_client --ctest-args -L gtest; \
+                      colcon test-result --verbose"
+
       - name: Build runtime image (test)
         run: |
           docker buildx build \
@@ -103,6 +117,13 @@ jobs:
                       ! ldd /ws/install/lib/libkafka_sink.so | grep -q 'not found'; \
                       ! ldd /ws/install/lib/libmosquitto_sink.so | grep -q 'not found'; \
                       echo OK"
+
+      - name: Smoke test (docker compose)
+        env:
+          DISPATCHER_IMAGE: ${{ steps.meta.outputs.image_name }}:ci
+        run: |
+          chmod +x tools/smoketest.sh
+          ./tools/smoketest.sh
 
       - name: Lint (ruff)
         run: |

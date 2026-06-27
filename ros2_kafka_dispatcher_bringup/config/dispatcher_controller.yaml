@@ -4,6 +4,7 @@
     selection_file_path: ""
     kafka_sink_node_name: /kafka_sink
     mosquitto_sink_node_name: /mosquitto_sink
+    zenoh_sink_node_name: /zenoh_sink
     allow_missing_sinks: true
     validate_topics: false
     auto_apply_on_mode_change: true

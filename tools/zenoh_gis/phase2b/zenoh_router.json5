@@ -1,0 +1,21 @@
+{
+  mode: "router",
+  // zenohd 1.9 schema: plugins_loading.search_dirs (covers the storage-manager
+  // plugin AND the influxdb backend .so, both placed at / in the image).
+  plugins_loading: { search_dirs: ["/"] },
+  listen: { endpoints: ["tcp/0.0.0.0:7447"] },
+  plugins: {
+    storage_manager: {
+      volumes: {
+        influxdb: { url: "http://influxdb:8086" }
+      },
+      storages: {
+        ros2_history: {
+          key_expr: "ros2/**",
+          strip_prefix: "ros2",
+          volume: { id: "influxdb", db: "zenoh_ros2", create_db: true }
+        }
+      }
+    }
+  }
+}

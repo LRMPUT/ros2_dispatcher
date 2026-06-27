@@ -23,6 +23,7 @@ Declared in `dispatcher_controller/src/dispatcher_controller_node.cpp`.
 |-----------|------|---------|-------------|
 | `kafka_sink_node_name` | string | `/kafka_sink` | Fully qualified name of the Kafka sink lifecycle node. |
 | `mosquitto_sink_node_name` | string | `/mosquitto_sink` | Fully qualified name of the Mosquitto sink lifecycle node. |
+| `zenoh_sink_node_name` | string | `/zenoh_sink` | Fully qualified name of the Zenoh sink lifecycle node. |
 | `allow_missing_sinks` | bool | `true` | Continue if one or both sinks are absent. |
 | `component_container_name` | string | `/ros2_kafka_dispatcher_container` | Container used for topic_tools plugin nodes. |
 
@@ -197,6 +198,65 @@ Same as `kafka_sink` (`metrics.enabled`, `metrics.interval_ms`, `metrics.topic`)
 
 ---
 
+## zenoh_sink
+
+Defaults in `zenoh_bridge/zenoh_sink/config/zenoh_sink.param.yaml`.
+
+### Subscriptions / QoS
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `subscriptions_yaml` | string | `""` | YAML-encoded list of topic subscriptions (set by controller). |
+| `qos_depth` | int | `10` | History queue depth for ROS 2 subscriptions. |
+
+### Zenoh session
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `zenoh.mode` | string | `peer` | Zenoh session role: `peer` (gossip discovery), `client` (connect to router), or `router`. |
+| `zenoh.connect` | string[] | `[]` | Endpoints to actively connect to, e.g., `["tcp/localhost:7447"]`. Required in `client` mode. |
+| `zenoh.listen` | string[] | `[]` | Endpoints to listen on, e.g., `["tcp/0.0.0.0:7447"]`. Optional. |
+| `zenoh.config_path` | string | `""` | Path to optional full zenoh JSON5 config file. When set, used as base config with `mode`, `connect`, `listen` applied on top. |
+
+### Topic mapping
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `zenoh.key_prefix` | string | `ros2` | Prefix for Zenoh key expressions (in `prefix_ros_topic` mode). |
+| `zenoh.topic_mapping_mode` | string | `prefix_ros_topic` | `prefix_ros_topic` maps `/a/b` → `<prefix>/a/b`; `fixed` sends everything to `zenoh.fixed_keyexpr`. |
+| `zenoh.fixed_keyexpr` | string | `ros2/raw` | Zenoh key expression used when `topic_mapping_mode` is `fixed`. |
+| `zenoh.payload_format` | string | `cdr` | Serialization format: `cdr` (binary) or `json`. |
+
+### Publisher options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `zenoh.congestion_control` | string | `drop` | Congestion handling: `drop` (never block ROS callback) or `block` (apply backpressure). |
+| `zenoh.priority` | int | `5` | Zenoh priority level (0–7; 5 = DATA priority). |
+| `zenoh.express` | bool | `false` | Bypass batching for lower latency. |
+| `zenoh.message_key` | string | `""` | Overrides `header.frame_id` in published messages for downstream nebula parsing. |
+
+### Metrics
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `metrics.enabled` | bool | `false` | Publish per-topic metrics to ROS 2. |
+| `metrics.interval_ms` | int | `1000` | Metrics publish interval in milliseconds. |
+| `metrics.topic` | string | `zenoh_sink/metrics` | ROS 2 topic name for metrics messages. |
+
+### Topic subscription YAML format
+
+```yaml
+- topic_name: /demo/chatter
+  msg_type: std_msgs/msg/String
+
+- topic_name: /camera/image_raw
+  msg_type: sensor_msgs/msg/Image
+  zenoh_name: camera_raw          # optional: override Zenoh key expression segment
+```
+
+---
+
 ## kafka_source
 
 | Parameter | Type | Default | Description |
@@ -205,6 +265,59 @@ Same as `kafka_sink` (`metrics.enabled`, `metrics.interval_ms`, `metrics.topic`)
 | `kafka.group_id` | string | `ros2-kafka-source` | Consumer group ID. |
 | `kafka.topic_pattern` | string | `^ros2\\..*` | Regex pattern for Kafka topics to consume. |
 | `kafka.offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
+| `kafka.allowed_types` | string[] | `[]` | Allowlist of `pkg/msg/Type` names whose type-support libraries may be loaded from incoming `ros_type` headers. **Empty means allow every valid type** (no restriction); set it to restrict which message types may be deserialized from untrusted Kafka payloads. |
+| `ros_topic_prefix` | string | `/kafka_decoded` | Prefix for republished ROS topics. |
+| `qos_depth` | int | `10` | History queue depth for ROS 2 subscriptions. |
+| `metrics.enabled` | bool | `true` | Publish per-topic metrics to ROS 2. |
+| `metrics.interval_ms` | int | `1000` | Metrics publish interval in milliseconds. |
+| `metrics.topic` | string | `kafka_source/metrics` | ROS 2 topic name for metrics messages. |
+| `topic_mappings` | string | `""` | Topic mapping overrides (YAML-encoded). |
+
+---
+
+## zenoh_source
+
+Declared in `zenoh_bridge/zenoh_source/src/zenoh_source_node.cpp`.
+
+### Zenoh session
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `zenoh.mode` | string | `peer` | Zenoh session role: `peer` (gossip discovery), `client` (connect to router), or `router`. |
+| `zenoh.connect` | string[] | `[]` | Endpoints to actively connect to, e.g., `["tcp/localhost:7447"]`. Required in `client` mode. |
+| `zenoh.listen` | string[] | `[]` | Endpoints to listen on, e.g., `["tcp/0.0.0.0:7447"]`. Optional. |
+| `zenoh.config_path` | string | `""` | Path to optional full zenoh JSON5 config file. When set, used as base config with `mode`, `connect`, `listen` applied on top. |
+
+### Subscription
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `zenoh.key_expr` | string | `ros2/**` | Zenoh key expression to subscribe to. |
+| `zenoh.key_prefix` | string | `ros2` | Prefix stripped from key expression when deriving ROS topic name. |
+| `zenoh.allowed_types` | string[] | `[]` | Allowlist of `pkg/msg/Type` names whose type-support libraries may be loaded from incoming `ros_type` attachments. **Empty means allow every valid type** (no restriction); set it to restrict which message types may be deserialized from untrusted Zenoh payloads. |
+| `ros_topic_prefix` | string | `/zenoh_decoded` | Prefix for republished ROS topics. |
+| `qos_depth` | int | `10` | History queue depth for ROS 2 subscriptions. |
+
+### Metrics
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `metrics.enabled` | bool | `true` | Publish per-topic metrics to ROS 2. |
+| `metrics.interval_ms` | int | `1000` | Metrics publish interval in milliseconds. |
+| `metrics.topic` | string | `zenoh_source/metrics` | ROS 2 topic name for metrics messages. |
+
+---
+
+## kafka_cdr_to_json
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `kafka.bootstrap_servers` | string | `localhost:9092` | Broker address. |
+| `kafka.group_id` | string | `ros2-kafka-cdr-to-json` | Consumer group ID. |
+| `kafka.input_topic_pattern` | string | `^ros2\\..*` | Regex pattern for Kafka topics to consume. |
+| `kafka.output_topic_prefix` | string | `ros2_json` | Prefix for the republished JSON topics. |
+| `kafka.offset_reset` | string | `latest` | Offset policy: `earliest` or `latest`. |
+| `kafka.allowed_types` | string[] | `[]` | Allowlist of `pkg/msg/Type` names whose type-support libraries may be loaded from incoming `ros_type` headers. **Empty means allow every valid type** (no restriction); set it to restrict which message types may be deserialized from untrusted Kafka payloads. |
 
 ---
 

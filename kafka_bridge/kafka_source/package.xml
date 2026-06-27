@@ -13,6 +13,7 @@
   <depend>rclcpp_lifecycle</depend>
   <depend>rclcpp_components</depend>
   <depend>lifecycle_msgs</depend>
+  <depend>kafka_client</depend>
   <depend>librdkafka-dev</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rmw</depend>

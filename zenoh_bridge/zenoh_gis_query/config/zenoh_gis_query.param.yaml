@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    # Session role: peer (default, no router required), client (connect to a router), or router.
+    zenoh.mode: "peer"
+    # List of endpoints to connect to in client mode, e.g. ["tcp/localhost:7447"].
+    # An empty YAML list [] cannot be type-inferred by ROS 2; leave unset for none.
+    # zenoh.connect: ["tcp/localhost:7447"]
+    # Key expression to subscribe to for NavSatFix position updates.
+    zenoh.key_expr: "ros2/**"
+    # Liveliness key prefix; subscriber matches <live_key_prefix>/*.
+    zenoh.live_key_prefix: "gis/live"
+    # Absolute path to the GeoJSON file containing field plot polygons.
+    # Leave empty ("") to auto-resolve to the installed config/plots.geojson.
+    gis.plots_path: ""
+    # Absolute path to the JSON file containing fixed-position sensors.
+    # Leave empty ("") to auto-resolve to the installed config/sensors.json.
+    gis.sensors_path: ""
+    # Fidelity horizon in milliseconds: max age of a fix sample before QoD fidelity -> 0.
+    gis.fidelity_horizon_ms: 2000

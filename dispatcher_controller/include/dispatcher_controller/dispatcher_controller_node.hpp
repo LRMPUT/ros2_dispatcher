@@ -122,6 +122,7 @@ private:
   bool switch_mode(SelectionMode new_mode, const std::string & file_path, bool apply_now,
     std::string & error_out);
   bool apply_selection(const std::vector<TopicSelection> & topics, std::string & error_out);
+  bool rollback_failed_selection(std::string & error_out);
   bool apply_selection_to_sink(
     const std::string & sink_label,
     const std::string & sink_node_name,
@@ -198,6 +199,9 @@ private:
   rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr mosquitto_change_state_client_;
   rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr mosquitto_get_state_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr mosquitto_set_parameters_client_;
+  rclcpp::Client<lifecycle_msgs::srv::ChangeState>::SharedPtr zenoh_change_state_client_;
+  rclcpp::Client<lifecycle_msgs::srv::GetState>::SharedPtr zenoh_get_state_client_;
+  rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr zenoh_set_parameters_client_;
   rclcpp::Client<introspection_manager_msgs::srv::GetTopics>::SharedPtr introspection_client_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr introspection_param_client_;
   rclcpp::Client<composition_interfaces::srv::LoadNode>::SharedPtr load_node_client_;
@@ -210,6 +214,7 @@ private:
   // Parameters
   std::string kafka_sink_node_name_;
   std::string mosquitto_sink_node_name_;
+  std::string zenoh_sink_node_name_;
   std::string introspection_service_name_;
   std::string introspection_node_name_;
   bool validate_topics_;
@@ -236,6 +241,9 @@ private:
 
   std::chrono::milliseconds service_timeout_{3000};
   rclcpp::TimerBase::SharedPtr startup_apply_timer_;
+  // Defensive only: all handlers/timer/param callbacks share the default
+  // MutuallyExclusive group and are already serialized by the executor. See the
+  // constructor's concurrency-model comment before relying on this for safety.
   std::mutex mutex_;
 };
 

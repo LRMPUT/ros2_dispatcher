@@ -1,0 +1,26 @@
+/**:
+  ros__parameters:
+    qos_depth: 10
+    # ROS topics are republished under this prefix, e.g. zenoh key "ros2/robot/odom"
+    # -> ROS topic "/zenoh_decoded/robot/odom".
+    ros_topic_prefix: "/zenoh_decoded"
+    metrics.enabled: true
+    metrics.interval_ms: 1000
+    metrics.topic: "zenoh_source/metrics"
+    # Session role: peer (default), client (connect to a router), or router.
+    zenoh.mode: "peer"
+    # An empty YAML list [] cannot be type-inferred by ROS 2; leave unset for none.
+    # zenoh.connect: ["tcp/localhost:7447"]
+    # zenoh.listen: ["tcp/0.0.0.0:7447"]
+    zenoh.config_path: ""
+    # Key expression to subscribe to. "ros2/**" matches everything zenoh_sink
+    # publishes with the default key prefix.
+    zenoh.key_expr: "ros2/**"
+    # Prefix stripped from the received key expression when deriving the ROS topic.
+    zenoh.key_prefix: "ros2"
+    # Allowlist of ROS message types that may be deserialized. SECURITY: the type
+    # name arrives on the (untrusted) Zenoh network and is used to dlopen type
+    # support. Leave unset to allow any *valid* type name (a warning is logged);
+    # set it to lock down which types are accepted. An empty YAML list [] cannot
+    # be type-inferred by ROS 2, so set it as a non-empty list when used:
+    # zenoh.allowed_types: ["std_msgs/msg/String", "nav_msgs/msg/Odometry"]

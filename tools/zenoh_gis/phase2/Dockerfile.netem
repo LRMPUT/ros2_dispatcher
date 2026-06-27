@@ -1,0 +1,7 @@
+# Phase-2 image: the runtime image + iproute2 (tc netem) for fault injection.
+# Keeps the netem/test dependency out of the production runtime image.
+FROM rkd:gis
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*

@@ -13,3 +13,9 @@ __pycache__
 .idea
 .DS_Store
 _codeql_detected_source_root
+
+# Local agent state and large data artifacts — keep them out of the build context
+.claude
+*.bag
+*.tar.gz
+docs/*.pdf

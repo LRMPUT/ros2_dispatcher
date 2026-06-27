@@ -10,6 +10,7 @@ def generate_launch_description():
     selection_file_path = LaunchConfiguration("selection_file_path")
     kafka_sink_node_name = LaunchConfiguration("kafka_sink_node_name")
     mosquitto_sink_node_name = LaunchConfiguration("mosquitto_sink_node_name")
+    zenoh_sink_node_name = LaunchConfiguration("zenoh_sink_node_name")
     validate_topics = LaunchConfiguration("validate_topics")
     param_file = LaunchConfiguration("param_file")
     log_level = LaunchConfiguration("log_level")
@@ -20,6 +21,7 @@ def generate_launch_description():
             DeclareLaunchArgument("selection_file_path", default_value=""),
             DeclareLaunchArgument("kafka_sink_node_name", default_value="/kafka_sink"),
             DeclareLaunchArgument("mosquitto_sink_node_name", default_value="/mosquitto_sink"),
+            DeclareLaunchArgument("zenoh_sink_node_name", default_value="/zenoh_sink"),
             DeclareLaunchArgument("validate_topics", default_value="false"),
             DeclareLaunchArgument("log_level", default_value="info"),
             DeclareLaunchArgument(
@@ -45,6 +47,7 @@ def generate_launch_description():
                         "selection_file_path": selection_file_path,
                         "kafka_sink_node_name": kafka_sink_node_name,
                         "mosquitto_sink_node_name": mosquitto_sink_node_name,
+                        "zenoh_sink_node_name": zenoh_sink_node_name,
                         "validate_topics": validate_topics,
                     },
                 ],

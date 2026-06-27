@@ -25,6 +25,7 @@
 #include <sstream>
 #include <utility>
 
+#include "kafka_client/ros_type_validation.hpp"
 #include "nlohmann/json.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "rosbag2_cpp/typesupport_helpers.hpp"
@@ -38,6 +39,10 @@ namespace kafka_cdr_to_json
 namespace
 {
 constexpr size_t kMaxLatencySamples = 1000;
+// Bounds the per-input-topic metrics map so a flood of distinct, attacker-
+// controlled Kafka input topics cannot grow it without limit. Once exceeded,
+// new topics are metered under a single shared "overflow" bucket.
+constexpr size_t kMaxMetricsTopics = 1024;
 constexpr int64_t kThrottleIntervalNs = 1'000'000'000LL;
 
 std::unordered_map<std::string, std::string> parse_topic_mappings(
@@ -56,13 +61,15 @@ std::unordered_map<std::string, std::string> parse_topic_mappings(
     auto trim = [](std::string & entry) {
         entry.erase(
           entry.begin(),
-          std::find_if(entry.begin(), entry.end(), [](unsigned char ch) {
-            return !std::isspace(static_cast<int>(ch));
-          }));
+          std::find_if(
+            entry.begin(), entry.end(), [](unsigned char ch) {
+              return !std::isspace(static_cast<int>(ch));
+            }));
         entry.erase(
-          std::find_if(entry.rbegin(), entry.rend(), [](unsigned char ch) {
-            return !std::isspace(static_cast<int>(ch));
-          }).base(),
+          std::find_if(
+            entry.rbegin(), entry.rend(), [](unsigned char ch) {
+              return !std::isspace(static_cast<int>(ch));
+            }).base(),
           entry.end());
       };
     trim(key);
@@ -120,11 +127,11 @@ size_t member_element_size(const rosidl_typesupport_introspection_cpp::MessageMe
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
       return sizeof(std::u16string);
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
-      const auto * members =
-        static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
-        member.members_->data);
-      return members ? members->size_of_ : 0U;
-    }
+        const auto * members =
+          static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+          member.members_->data);
+        return members ? members->size_of_ : 0U;
+      }
     default:
       return 0U;
   }
@@ -179,29 +186,29 @@ nlohmann::json build_json_scalar(
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
       return *static_cast<const int64_t *>(value_ptr);
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT: {
-      const float value = *static_cast<const float *>(value_ptr);
-      return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
-    }
+        const float value = *static_cast<const float *>(value_ptr);
+        return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
+      }
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_DOUBLE: {
-      const double value = *static_cast<const double *>(value_ptr);
-      return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
-    }
+        const double value = *static_cast<const double *>(value_ptr);
+        return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
+      }
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
       return *static_cast<const std::string *>(value_ptr);
     case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING: {
-      const auto & value = *static_cast<const std::u16string *>(value_ptr);
-      std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
-      return converter.to_bytes(value);
-    }
-    case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
-      if (!value_ptr || !member.members_) {
-        return nullptr;
+        const auto & value = *static_cast<const std::u16string *>(value_ptr);
+        std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
+        return converter.to_bytes(value);
       }
-      const auto * members =
-        static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
-        member.members_->data);
-      return members ? build_json_message(*members, value_ptr) : nlohmann::json(nullptr);
-    }
+    case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+        if (!value_ptr || !member.members_) {
+          return nullptr;
+        }
+        const auto * members =
+          static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(
+          member.members_->data);
+        return members ? build_json_message(*members, value_ptr) : nlohmann::json(nullptr);
+      }
     default:
       return nullptr;
   }
@@ -333,6 +340,7 @@ KafkaCdrToJsonNode::KafkaCdrToJsonNode(const rclcpp::NodeOptions & options)
   declare_parameter("kafka.input_topic_pattern", kafka_parameters_.input_topic_pattern);
   declare_parameter("kafka.output_topic_prefix", kafka_parameters_.output_topic_prefix);
   declare_parameter("kafka.offset_reset", kafka_parameters_.offset_reset);
+  declare_parameter("kafka.allowed_types", kafka_parameters_.allowed_types);
   declare_parameter("json.include_ros_type", json_parameters_.include_ros_type);
   declare_parameter("json.include_timestamp", json_parameters_.include_timestamp);
   declare_parameter("metrics.enabled", metrics_enabled_);
@@ -384,7 +392,7 @@ KafkaCdrToJsonNode::CallbackReturn KafkaCdrToJsonNode::on_activate(
   reset_metrics_timer();
 
   running_.store(true, std::memory_order_release);
-  consumer_thread_ = std::thread([this]() { poll_loop(); });
+  consumer_thread_ = std::thread([this]() {poll_loop();});
   return CallbackReturn::SUCCESS;
 }
 
@@ -401,6 +409,13 @@ KafkaCdrToJsonNode::CallbackReturn KafkaCdrToJsonNode::on_deactivate(
   reset_metrics_timer();
   if (metrics_pub_) {
     metrics_pub_->on_deactivate();
+  }
+  {
+    // The consumer thread is joined above, so release the loaded type-support
+    // libraries instead of carrying them (and their dlopen handles) across a
+    // deactivate. A re-activate reloads lazily, re-gated by the allowlist.
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    type_support_cache_.clear();
   }
   return CallbackReturn::SUCCESS;
 }
@@ -449,6 +464,16 @@ rcl_interfaces::msg::SetParametersResult KafkaCdrToJsonNode::on_parameters_set(
     return result;
   }
 
+  // Snapshot the live config so that if validation rejects this set, no field
+  // (notably the security-relevant allowlist) is left mutated while the
+  // parameter server keeps the old value.
+  const auto saved_kafka_parameters = kafka_parameters_;
+  const auto saved_json_parameters = json_parameters_;
+  const auto saved_metrics_enabled = metrics_enabled_;
+  const auto saved_metrics_interval_ms = metrics_interval_ms_;
+  const auto saved_metrics_topic = metrics_topic_;
+  const auto saved_topic_mappings = topic_mappings_;
+
   for (const auto & parameter : parameters) {
     if (parameter.get_name() == "kafka.bootstrap_servers") {
       kafka_parameters_.bootstrap_servers = parameter.as_string();
@@ -460,6 +485,12 @@ rcl_interfaces::msg::SetParametersResult KafkaCdrToJsonNode::on_parameters_set(
       kafka_parameters_.output_topic_prefix = parameter.as_string();
     } else if (parameter.get_name() == "kafka.offset_reset") {
       kafka_parameters_.offset_reset = parameter.as_string();
+    } else if (parameter.get_name() == "kafka.allowed_types") {
+      kafka_parameters_.allowed_types = parameter.as_string_array();
+      // Drop cached type support so a tightened allowlist takes effect on the
+      // next message rather than serving previously-allowed types from cache.
+      std::lock_guard<std::mutex> lock(cache_mutex_);
+      type_support_cache_.clear();
     } else if (parameter.get_name() == "json.include_ros_type") {
       json_parameters_.include_ros_type = parameter.as_bool();
     } else if (parameter.get_name() == "json.include_timestamp") {
@@ -477,6 +508,14 @@ rcl_interfaces::msg::SetParametersResult KafkaCdrToJsonNode::on_parameters_set(
 
   std::string error;
   if (!validate_parameters(&error)) {
+    // Roll back every in-memory field; the parameter server is not committing
+    // this set, so the live state must match the previously-accepted values.
+    kafka_parameters_ = saved_kafka_parameters;
+    json_parameters_ = saved_json_parameters;
+    metrics_enabled_ = saved_metrics_enabled;
+    metrics_interval_ms_ = saved_metrics_interval_ms;
+    metrics_topic_ = saved_metrics_topic;
+    topic_mappings_ = saved_topic_mappings;
     result.reason = error;
     result.successful = false;
     return result;
@@ -494,6 +533,7 @@ bool KafkaCdrToJsonNode::configure_from_parameters(std::string * error_message)
   get_parameter("kafka.input_topic_pattern", kafka_parameters_.input_topic_pattern);
   get_parameter("kafka.output_topic_prefix", kafka_parameters_.output_topic_prefix);
   get_parameter("kafka.offset_reset", kafka_parameters_.offset_reset);
+  get_parameter("kafka.allowed_types", kafka_parameters_.allowed_types);
   get_parameter("json.include_ros_type", json_parameters_.include_ros_type);
   get_parameter("json.include_timestamp", json_parameters_.include_timestamp);
   get_parameter("metrics.enabled", metrics_enabled_);
@@ -533,6 +573,13 @@ bool KafkaCdrToJsonNode::validate_parameters(std::string * error_message) const
     }
     return false;
   }
+  std::string invalid_type;
+  if (!kafka_client::all_valid_ros_type_names(kafka_parameters_.allowed_types, &invalid_type)) {
+    if (error_message) {
+      *error_message = "kafka.allowed_types contains invalid ROS type: " + invalid_type;
+    }
+    return false;
+  }
   if (metrics_interval_ms_ <= 0) {
     if (error_message) {
       *error_message = "metrics.interval_ms must be > 0.";
@@ -550,6 +597,14 @@ bool KafkaCdrToJsonNode::validate_parameters(std::string * error_message) const
 
 bool KafkaCdrToJsonNode::start_consumer(std::string * error_message)
 {
+  if (kafka_parameters_.allowed_types.empty()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "kafka.allowed_types is empty: every valid ROS type advertised by an "
+      "incoming Kafka 'ros_type' header will be loaded. Set kafka.allowed_types "
+      "to restrict which message types may be deserialized.");
+  }
+
   std::string errstr;
   std::unique_ptr<RdKafka::Conf> conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
   if (!conf) {
@@ -584,7 +639,7 @@ bool KafkaCdrToJsonNode::start_consumer(std::string * error_message)
     return false;
   }
 
-  std::vector<std::string> topics{ kafka_parameters_.input_topic_pattern };
+  std::vector<std::string> topics{kafka_parameters_.input_topic_pattern};
   RdKafka::ErrorCode err = consumer->subscribe(topics);
   if (err != RdKafka::ERR_NO_ERROR) {
     if (error_message) {
@@ -621,7 +676,9 @@ bool KafkaCdrToJsonNode::start_producer(std::string * error_message)
 
   const auto health = producer_->health();
   if (health.status == kafka_client::ProducerStatus::DEGRADED) {
-    RCLCPP_WARN(get_logger(), "Kafka producer started in degraded mode: %s", health.last_error.c_str());
+    RCLCPP_WARN(
+      get_logger(), "Kafka producer started in degraded mode: %s",
+      health.last_error.c_str());
   }
   return true;
 }
@@ -688,17 +745,25 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
   {
     std::lock_guard<std::mutex> lock(cache_mutex_);
     auto it = metrics_.find(input_topic);
-    if (it == metrics_.end()) {
+    if (it != metrics_.end()) {
+      it->second->output_topic = output_topic;
+      it->second->ros_type = resolved_ros_type;
+      metrics = it->second;
+    } else if (metrics_.size() >= kMaxMetricsTopics) {
+      // Map is full — meter under a shared overflow bucket instead of allocating
+      // an unbounded number of per-topic entries for untrusted input topics.
+      if (!overflow_metrics_) {
+        overflow_metrics_ = std::make_shared<TopicMetrics>();
+        overflow_metrics_->input_topic = "(overflow)";
+      }
+      metrics = overflow_metrics_;
+    } else {
       auto entry = std::make_shared<TopicMetrics>();
       entry->input_topic = input_topic;
       entry->output_topic = output_topic;
       entry->ros_type = resolved_ros_type;
-      it = metrics_.emplace(input_topic, entry).first;
-    } else {
-      it->second->output_topic = output_topic;
-      it->second->ros_type = resolved_ros_type;
+      metrics = metrics_.emplace(input_topic, entry).first->second;
     }
-    metrics = it->second;
   }
 
   metrics->received.fetch_add(1, std::memory_order_relaxed);
@@ -729,7 +794,8 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
   if (ros_type.empty()) {
     metrics->failed.fetch_add(1, std::memory_order_relaxed);
     if (should_log_throttled("missing_ros_type")) {
-      RCLCPP_WARN(get_logger(), "Missing ros_type header, skipping message on %s.",
+      RCLCPP_WARN(
+        get_logger(), "Missing ros_type header, skipping message on %s.",
         input_topic.c_str());
     }
     return;
@@ -740,7 +806,8 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
   if (!ensure_type_support(ros_type, &type_support, &type_error)) {
     metrics->failed.fetch_add(1, std::memory_order_relaxed);
     if (should_log_throttled("type_support")) {
-      RCLCPP_WARN(get_logger(), "Failed to load type support for '%s': %s",
+      RCLCPP_WARN(
+        get_logger(), "Failed to load type support for '%s': %s",
         ros_type.c_str(), type_error.c_str());
     }
     return;
@@ -766,7 +833,8 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
   {
     metrics->failed.fetch_add(1, std::memory_order_relaxed);
     if (should_log_throttled("json_serialize")) {
-      RCLCPP_WARN(get_logger(), "Failed to serialize JSON for '%s': %s",
+      RCLCPP_WARN(
+        get_logger(), "Failed to serialize JSON for '%s': %s",
         ros_type.c_str(), json_error.c_str());
     }
     return;
@@ -821,14 +889,16 @@ void KafkaCdrToJsonNode::process_message(RdKafka::Message * message)
     send_result.status == kafka_client::SendStatus::PRODUCER_UNAVAILABLE)
   {
     if (should_log_throttled("producer_backpressure")) {
-      RCLCPP_WARN(get_logger(), "Kafka producer backpressure on %s: %s",
+      RCLCPP_WARN(
+        get_logger(), "Kafka producer backpressure on %s: %s",
         output_topic.c_str(), send_result.error_message.c_str());
     }
     return;
   }
 
   if (should_log_throttled("producer_error")) {
-    RCLCPP_ERROR(get_logger(), "Failed to publish JSON to Kafka: %s",
+    RCLCPP_ERROR(
+      get_logger(), "Failed to publish JSON to Kafka: %s",
       send_result.error_message.c_str());
   }
   return;
@@ -842,8 +912,23 @@ bool KafkaCdrToJsonNode::ensure_type_support(
   std::lock_guard<std::mutex> lock(cache_mutex_);
   auto it = type_support_cache_.find(ros_type);
   if (it != type_support_cache_.end()) {
+    // Cache hit implies the type already passed the allowlist gate when first
+    // loaded; the cache is cleared whenever kafka.allowed_types changes.
     *entry = it->second;
     return true;
+  }
+
+  // Gate the (untrusted, Kafka-header-derived) type against the allowlist
+  // before loading any type-support library.
+  if (!kafka_client::is_allowed_ros_type_name(ros_type, kafka_parameters_.allowed_types)) {
+    if (error_message) {
+      if (kafka_client::is_valid_ros_type_name(ros_type)) {
+        *error_message = "ROS type not allowed by kafka.allowed_types.";
+      } else {
+        *error_message = "Invalid ROS type name.";
+      }
+    }
+    return false;
   }
 
   try {
