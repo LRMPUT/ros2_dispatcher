@@ -238,6 +238,7 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
         std::string key{s.get_keyexpr().as_string_view()};
         std::string robot = key.substr(key.rfind('/') + 1);
         std::lock_guard<std::mutex> lk(state_mutex_);
+        if (!is_active_.load(std::memory_order_acquire)) {return;}
         if (s.get_kind() == Z_SAMPLE_KIND_PUT) {
           live_robots_.insert(robot);
         } else {
@@ -547,8 +548,14 @@ bool ZenohGisQueryNode::start_session(std::string * error_message)
 
 void ZenohGisQueryNode::stop_session()
 {
-  auto rt = std::exchange(rt_, nullptr);
-  (void)rt;
+  std::shared_ptr<ZenohRuntime> rt;
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    rt = std::move(rt_);  // rt_ becomes null under the lock
+  }
+  // rt destructs HERE, outside the lock. The subscriber/queryable destructors
+  // block until in-flight Zenoh callbacks drain, and those callbacks take
+  // state_mutex_ — so destroying under the lock would deadlock. Must be outside.
 }
 
 void ZenohGisQueryNode::on_position_sample(
@@ -569,6 +576,7 @@ void ZenohGisQueryNode::on_position_sample(
 
   {
     std::lock_guard<std::mutex> lk(state_mutex_);
+    if (!is_active_.load(std::memory_order_acquire)) {return;}
     latest_[robot] = fix;
 
     // Compute new inside-set for this robot across all plots.

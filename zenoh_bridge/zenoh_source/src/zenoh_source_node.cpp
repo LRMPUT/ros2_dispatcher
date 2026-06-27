@@ -220,14 +220,15 @@ rcl_interfaces::msg::SetParametersResult ZenohSourceNode::on_parameters_set(
   const bool is_active =
     current_state.id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
 
+  if (is_active) {
+    result.successful = false;
+    result.reason = "deactivate first";
+    return result;
+  }
+
   ZenohParameters pending = zenoh_parameters_;
   for (const auto & param : parameters) {
     const auto & name = param.get_name();
-    if (name.rfind("zenoh.", 0) == 0 && is_active) {
-      result.successful = false;
-      result.reason = "deactivate first";
-      return result;
-    }
     if (name == "zenoh.mode") {
       pending.mode = param.as_string();
     } else if (name == "zenoh.connect") {
