@@ -1,0 +1,12 @@
+# Zenoh router (zenohd 1.9.0 + bundled storage-manager plugin) + the version-matched
+# InfluxDB v1 backend .so, fetched at build time (no binary committed to the repo).
+FROM alpine:3 AS fetch
+ARG ZBV=1.9.0
+RUN apk add --no-cache curl unzip
+RUN curl -fsSL -o /tmp/b.zip \
+      "https://github.com/eclipse-zenoh/zenoh-backend-influxdb/releases/download/${ZBV}/zenoh-backend-influxdb-${ZBV}-x86_64-unknown-linux-musl-standalone.zip" \
+ && unzip /tmp/b.zip -d /tmp/b
+
+FROM eclipse/zenoh:1.9.0
+# Place the InfluxDB v1 backend alongside the bundled plugins (/).
+COPY --from=fetch /tmp/b/libzenoh_backend_influxdb.so /libzenoh_backend_influxdb.so

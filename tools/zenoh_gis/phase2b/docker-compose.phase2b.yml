@@ -1,0 +1,52 @@
+# Phase 2b: Zenoh-native storage. zenoh_sink(JSON) -> zenoh router (storage-manager
+# + InfluxDB v1 backend) -> InfluxDB -> (Grafana). Demonstrates the brokerless
+# store-and-query paradigm. Edge feed reuses the rkd:gis image.
+services:
+  influxdb:
+    image: influxdb:1.8
+    environment:
+      INFLUXDB_DB: "zenoh_ros2"
+    healthcheck:
+      test: ["CMD", "influx", "-execute", "SHOW DATABASES"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: ["zb"]
+
+  zenoh_router:
+    image: ${ZENOHD_IMAGE:-rkd:zenohd-influx}
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./zenoh_router.json5:/zenoh_router.json5:ro
+    command: ["-c", "/zenoh_router.json5"]
+    networks: ["zb"]
+
+  edge_feed:
+    image: ${RKD_GIS_IMAGE:-rkd:gis}
+    depends_on: ["zenoh_router"]
+    environment:
+      ROS_LOCALHOST_ONLY: "1"
+      ROBOT_ID: "1"
+    volumes:
+      - ../:/zg:ro
+    entrypoint: ["bash", "/zg/phase2b/edge_feed_entrypoint.sh"]
+    networks: ["zb"]
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    depends_on: ["influxdb"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_SECURITY_ADMIN_PASSWORD: "zenoh"
+    ports: ["3000:3000"]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: ["zb"]
+
+networks:
+  zb:
+    driver: bridge
