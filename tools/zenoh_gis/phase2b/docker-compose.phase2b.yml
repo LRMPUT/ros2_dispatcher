@@ -47,6 +47,16 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks: ["zb"]
 
+  field_parser:
+    image: python:3.12-slim
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./influx_field_parser.py:/influx_field_parser.py:ro
+    command: ["python3", "/influx_field_parser.py"]
+    networks: ["zb"]
+
 networks:
   zb:
     driver: bridge

@@ -53,13 +53,20 @@ key) and the total stored-point count.
    fails (`Connection refused`) if InfluxDB isn't ready. The compose gates the
    router on an InfluxDB `healthcheck` (`condition: service_healthy`).
 
-## Known limitation
+## Storage model + the rich-field sidecar
 
 The InfluxDB backend stores each sample's payload as a single `value` field (the
 JSON string) plus Zenoh metadata (encoding, timestamp) — it does **not** parse
-JSON into numeric InfluxDB fields. So Grafana panels over **ingestion/counts and
-raw values** work directly; charting `latitude`/`longitude` as numeric series
-would need a value-parsing step (a Telegraf/processor transform, or a small
-field-extracting consumer). This is the same key→value time-series storage model
-discussed for "Zenoh + InfluxDB" — replay/history + activity dashboards, not
-field-level analytics (use Phase-1 queryables or Kafka+ksqlDB for that).
+JSON into numeric InfluxDB fields. So out of the box, Grafana panels over
+**ingestion/counts and raw values** work directly, but charting
+`latitude`/`longitude` as numeric series does not (InfluxQL can't parse a JSON
+string field). This is the same key→value time-series storage model discussed for
+"Zenoh + InfluxDB" — replay/history, not field-level analytics.
+
+To get **numeric trajectory charts**, the stack includes `influx_field_parser.py`
+(the `field_parser` service, pure-stdlib Python, no deps): it reads recent
+`*/gps/fix` points, extracts `latitude`/`longitude`/`altitude` into a numeric
+`gps_fields` measurement tagged by `robot` (idempotent by timestamp), and the
+dashboard's "Latitude (parsed) per robot" panel charts it. This is the
+field-extraction step the backend omits; for heavier analytics use the Phase-1
+queryables or Kafka+ksqlDB.

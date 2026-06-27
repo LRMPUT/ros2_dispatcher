@@ -7,23 +7,24 @@
   "panels": [
     {
       "id": 1, "type": "timeseries", "title": "Ingestion rate (points / 10s, per key)",
-      "datasource": {"type": "influxdb", "uid": "InfluxDB-zenoh"},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
-      "targets": [{
-        "rawQuery": true,
-        "query": "SELECT count(\"value\") FROM /.*/ WHERE $timeFilter GROUP BY time(10s), \"_measurement\" fill(0)",
-        "resultFormat": "time_series"
-      }]
+      "datasource": {"type": "influxdb", "uid": "influxdb-zenoh"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "targets": [{"rawQuery": true, "resultFormat": "time_series",
+        "query": "SELECT count(\"value\") FROM /.*\\/gps\\/fix/ WHERE $timeFilter GROUP BY time(10s), \"_measurement\" fill(0)"}]
     },
     {
       "id": 2, "type": "stat", "title": "Total stored points (15m)",
-      "datasource": {"type": "influxdb", "uid": "InfluxDB-zenoh"},
-      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 9},
-      "targets": [{
-        "rawQuery": true,
-        "query": "SELECT count(\"value\") FROM /.*/ WHERE $timeFilter",
-        "resultFormat": "time_series"
-      }]
+      "datasource": {"type": "influxdb", "uid": "influxdb-zenoh"},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 8},
+      "targets": [{"rawQuery": true, "resultFormat": "time_series",
+        "query": "SELECT count(\"value\") FROM /.*\\/gps\\/fix/ WHERE $timeFilter"}]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Latitude (parsed) per robot",
+      "datasource": {"type": "influxdb", "uid": "influxdb-zenoh"},
+      "gridPos": {"h": 7, "w": 16, "x": 8, "y": 8},
+      "targets": [{"rawQuery": true, "resultFormat": "time_series",
+        "query": "SELECT mean(\"latitude\") FROM \"gps_fields\" WHERE $timeFilter GROUP BY time(2s), \"robot\" fill(previous)"}]
     }
   ]
 }
